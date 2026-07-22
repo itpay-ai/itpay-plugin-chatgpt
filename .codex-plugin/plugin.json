@@ -1,0 +1,27 @@
+{
+  "name": "itpay-plugin-chatgpt",
+  "version": "2.0.15",
+  "description": "Use ItPay MCP workflows in ChatGPT and a bundled ItPay CLI in local Codex.",
+  "author": {
+    "name": "itpay.ai",
+    "url": "https://app.itpay.ai"
+  },
+  "homepage": "https://app.itpay.ai",
+  "repository": "https://github.com/itpay-ai/itpay-plugin-chatgpt",
+  "license": "MIT",
+  "keywords": ["itpay", "commerce", "checkout", "agent"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "ItPay",
+    "shortDescription": "Discover and buy verified services with ItPay",
+    "longDescription": "Use ItPay to discover services, review prices, hand off Checkout to a human, receive delivery, inspect orders, and request refunds.",
+    "developerName": "itpay.ai",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://app.itpay.ai",
+    "defaultPrompt": [
+      "Use ItPay to find a verified service for my request and show the price before Checkout.",
+      "Use ItPay to resume my current purchase without creating a duplicate Checkout."
+    ]
+  }
+}

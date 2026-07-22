@@ -1,0 +1,7 @@
+{
+  "name": "itpay-plugin-chatgpt",
+  "version": "2.0.15",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test" }
+}

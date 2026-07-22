@@ -1,0 +1,4 @@
+interface:
+  display_name: "ItPay"
+  short_description: "Use ItPay in ChatGPT and Codex"
+  default_prompt: "Use $itpay to find an ItPay service and show the price before Checkout."
