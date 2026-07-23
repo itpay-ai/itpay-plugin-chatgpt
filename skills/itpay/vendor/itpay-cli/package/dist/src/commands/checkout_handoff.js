@@ -1,3 +1,4 @@
+import { buildOpenClawTelegramAction } from "../render/telegram.js";
 export function shouldPrepareLocalCheckoutImage(platform) {
     return platform === "markdown";
 }
@@ -14,6 +15,12 @@ export function buildCheckoutHandoff(input) {
     }
     else if (input.platform === "plain_chat" && input.qrImageURL) {
         handoff.qr_image_url = input.qrImageURL;
+    }
+    else if (input.platform === "telegram" && input.qrImageURL) {
+        handoff.qr_image_url = input.qrImageURL;
+    }
+    if (input.agentType?.trim().toLowerCase() === "openclaw" && input.platform === "telegram" && input.plan && input.target) {
+        handoff.agent_action = buildOpenClawTelegramAction(input.plan, input.target);
     }
     return {
         handoff,

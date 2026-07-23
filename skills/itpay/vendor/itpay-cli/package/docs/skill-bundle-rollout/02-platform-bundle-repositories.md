@@ -1,6 +1,6 @@
 # 核心任务二：多平台 Bundle Skill 仓库与自动同步
 
-状态：待实施
+状态：首批平台已实施
 
 ## 1. Current State
 
@@ -31,7 +31,7 @@ CLI 发布后：
 
 ```text
 @itpay/cli@X.Y.Z 发布成功
-  -> 通知四个平台仓库
+  -> 各平台仓库定时读取 npm dist-tags.latest
   -> 下载精确 X.Y.Z 和 npm integrity
   -> 安装精确 production dependencies
   -> 生成 bundle 和 lock
@@ -126,16 +126,20 @@ itpay-skill-workbuddy/
 
 ### 第一阶段产物
 
-第一阶段使用“vendored Node bundle”，不增加打包器：
+平台按审核环境选择现有的两种构建格式：
 
 ```text
-vendor/itpay-cli/package/       npm 包内容
-vendor/itpay-cli/node_modules/  仅 production dependencies
-bin/itpay                       平台薄启动器
-bundle.lock.json                来源证明
+npm-tree:
+  vendor/itpay-cli/package/       npm 包内容
+  vendor/itpay-cli/node_modules/  仅 production dependencies
+
+single-file-esm:
+  vendor/itpay-cli/itpay-cli.bundle.mjs
+  vendor/itpay-cli/docs/agent/buyer/
+  vendor/itpay-cli/licenses/
 ```
 
-运行时不得联网安装。宿主必须已有 Node.js 18+。如果某平台审核环境没有 Node，再单独启动“standalone executable”任务；不要在还没有失败证据时提前维护多架构二进制。
+WorkBuddy 和 OpenClaw 使用 `single-file-esm`，上传包不得包含任何 `node_modules`。npm 依赖只允许出现在 CI 临时构建目录；运行时不得联网安装。宿主必须已有 Node.js 18+。如果某平台审核环境没有 Node，再单独启动“standalone executable”任务；不要在还没有失败证据时提前维护多架构二进制。
 
 ### `bundle.lock.json`
 
@@ -209,25 +213,18 @@ bundle 不包含凭据、.env、~/.itpay-v3 或 npm token
 
 ### Step 4：CLI 发布后创建同步 PR
 
-修改 CLI 主仓库现有 npm CD：只有 npm publish 成功或确认该 commit 已发布后，才向平台仓库发送带以下字段的事件：
+CLI 主仓库在 `main` 提供 reusable workflow。各平台仓库每小时错峰运行 caller workflow，并可手动触发；npm `dist-tags.latest` 或请求的 bundle format 与当前 `bundle.lock.json` 不同时更新。平台仓库自身的 `GITHUB_TOKEN` 写入本仓库，因此不需要跨仓 PAT，也不会在 CLI 发布失败时提前同步未发布版本。
 
-```json
-{
-  "version": "2.0.14",
-  "npm_integrity": "sha512-...",
-  "source_git_sha": "..."
-}
-```
-
-平台仓库收到事件后：
+检测到新版本后：
 
 - 重新生成 bundle；
 - 更新 manifest 版本、lock、changelog；
 - 跑全套测试；
-- 创建 `sync @itpay/cli X.Y.Z` PR；
+- 对启用 Skill 差异跟踪的平台，比较旧、新 `sourceGitSha` 的中心 `skills/itpay/SKILL.md`；有差异时创建 Draft PR、附 diff 和人工合并清单，但不覆盖平台 Skill；
+- 创建或刷新 `automation/itpay-cli-X.Y.Z` 分支和同步 PR；
 - PR 描述列出 CLI commit、integrity、平台测试和是否需要商店重新审核。
 
-增加每日一次的版本漂移检查作为丢失事件的兜底，只报警或补 PR，不直接发布。
+同步 workflow 只开 PR，不合并、不打 tag、不发布平台商店版本。
 
 依赖：Step 3。
 
@@ -247,7 +244,7 @@ CLI 业务 API：无。
 新增发布合同：
 
 - `bundle.lock.json` schema。
-- CLI release dispatch payload。
+- CLI reusable workflow 与各平台 caller workflow。
 - 每个平台 manifest 和平台版本。
 
 CLI 版本和平台包版本第一阶段保持相同，减少映射成本。若以后平台仅修改说明而 CLI 未变，再引入独立的 `pluginVersion`，同时保留 `cliVersion`；现在不提前增加双版本系统。
@@ -272,11 +269,11 @@ CLI 版本和平台包版本第一阶段保持相同，减少映射成本。若�
 ## 9. Risks / Uncertainties
 
 - OpenAI Skill 沙箱是否提供满足要求的 Node 运行时不能作为稳定合同；ChatGPT 路径应以远程 MCP 为主。
-- vendored `node_modules` 会增大包体，但当前依赖很少，先以真实平台大小限制验证，不提前引入 bundler。
+- `single-file-esm` 仍依赖宿主 Node.js 18+；未来引入原生 Node addon 时需要重新验证 bundling。
 - 四个仓库意味着四套审核节奏，但不意味着四套 CLI 业务实现。
 - WorkBuddy 公共 SkillHub 提交通道未公开，自动化只能先生成可上传包。
 - 平台安全扫描可能拒绝支付或可执行 bundle；拒绝原因应反馈到相应平台仓库，不改变其他平台已通过版本。
 
 ## 10. Checkpoint
 
-仓库创建和跨仓凭据配置属于外部状态操作。实施到该步骤时需要仓库组织名、创建权限和最小权限 GitHub App/PAT；在此之前可以完成生成器、模板和本地验证。
+首批仓库、生成器和无跨仓凭据的同步 workflow 已完成。剩余 checkpoint 是各平台审核与人工发布；这些步骤不由同步 workflow 自动执行。

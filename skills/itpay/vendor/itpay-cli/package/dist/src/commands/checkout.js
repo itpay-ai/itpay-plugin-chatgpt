@@ -46,7 +46,7 @@ export async function runCheckoutPresentation(backend, options) {
             ...(options.baseURL ? { baseURL: options.baseURL } : {}),
         });
     }
-    const envelope = pendingCheckoutEnvelope(presentation, checkoutURL, plan, nextCommand, options.agentType);
+    const envelope = pendingCheckoutEnvelope(presentation, checkoutURL, plan, nextCommand, options.agentType, options.target);
     const plainResult = checkoutPlainResult(envelope.result);
     if (!options.jsonOutput && platformKeyForHost(host) === "terminal") {
         plainResult.push("qr:", await renderTerminalQR(checkoutURL, "terminal"));
@@ -57,14 +57,16 @@ export async function runCheckoutPresentation(backend, options) {
         plainResult,
     });
 }
-function pendingCheckoutEnvelope(presentation, checkoutURL, plan, nextCommand, agentType) {
+function pendingCheckoutEnvelope(presentation, checkoutURL, plan, nextCommand, agentType, target) {
     const platform = platformKeyForHost(plan.host);
     const amount = formatMoney(presentation.checkout.amount_minor, presentation.checkout.currency);
     const presentationHandoff = buildCheckoutHandoff({
         platform,
         url: checkoutURL,
         amount,
+        plan,
         ...(agentType ? { agentType } : {}),
+        ...(target ? { target } : {}),
         ...(plan.preferredQRSources[0] ? { qrImageURL: plan.preferredQRSources[0] } : {}),
         ...(plan.ideImageAttach?.status === "downloaded" && plan.ideImageAttach.localPath
             ? { localPath: plan.ideImageAttach.localPath }

@@ -141,6 +141,7 @@ export async function runBuy(backend, config, options) {
             ...(qrPNGURL ? { qrPNGURL } : {}),
             ...(paymentIntent ? { paymentIntent } : {}),
             ...(options.agentType ? { agentType: options.agentType } : {}),
+            ...(options.target ? { target: options.target } : {}),
         });
         writeCommandEnvelope(envelope, { jsonOutput: true, ...(options.output ? { output: options.output } : {}) });
         return {
@@ -198,7 +199,9 @@ function buildBuyEnvelope(input) {
         platform,
         url: input.checkoutURL,
         amount,
+        plan: input.plan,
         ...(input.agentType ? { agentType: input.agentType } : {}),
+        ...(input.target ? { target: input.target } : {}),
         ...(input.qrPNGURL ? { qrImageURL: input.qrPNGURL } : {}),
         ...(input.plan.ideImageAttach?.status === "downloaded" && input.plan.ideImageAttach.localPath
             ? { localPath: input.plan.ideImageAttach.localPath }
