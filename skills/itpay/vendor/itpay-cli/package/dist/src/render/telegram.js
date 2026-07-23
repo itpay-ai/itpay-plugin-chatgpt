@@ -6,7 +6,6 @@
 // `checkout_qr` (a buyer scans a branded QR from the CLI/agent to
 // land on the human checkout page). We emit the same button shape
 // for all three kinds but adjust the button intent.
-import { ideImageAttachBlock } from "./ide.js";
 function buttonsFor(plan) {
     if (plan.kind === "payment_qr" && plan.paymentIntentID) {
         return [
@@ -22,53 +21,27 @@ function buttonsFor(plan) {
     }
     // checkout_qr
     return [
-        { label: "打开 ItPay 收银台", kind: "url", url: plan.url },
+        { label: "📱 手机点这儿支付", kind: "url", url: plan.url },
         ...(plan.checkoutID
-            ? [{ label: "查询 Checkout 状态", kind: "callback", intent: "check_checkout_status", ref: plan.checkoutID }]
+            ? [{ label: "📋 已授权给我读", kind: "callback", intent: "grant_confirmed", ref: plan.checkoutID }]
             : []),
     ];
 }
-function format(plan) {
-    return plan.kind === "payment_qr" ? "photo_text_inline_buttons" : "text_inline_buttons";
+function nativeButton(button) {
+    if (button.kind === "url") {
+        return { label: button.label, url: button.url ?? "" };
+    }
+    const value = button.intent === "check_checkout_status"
+        ? `itp:checkout:${button.ref ?? ""}`
+        : `itp:${button.intent ?? "callback"}:${button.ref ?? ""}`;
+    return { label: button.label, value };
 }
 export function renderTelegram(plan, options) {
     const out = options.output ?? ((line) => process.stdout.write(line));
-    const buttons = buttonsFor(plan);
+    const agentAction = buildOpenClawTelegramAction(plan, options.target);
+    const presentation = agentAction.arguments.presentation;
     const media = collectTelegramMedia(plan);
-    const text = plan.kind === "payment_qr"
-        ? `ItPay payment QR — ${plan.summary}`
-        : plan.kind === "auth_qr"
-            ? `ItPay auth required — ${plan.summary}`
-            : `ItPay checkout QR — ${plan.summary}`;
-    const presentation = {
-        format: format(plan),
-        media,
-        text,
-        links: plan.platform.links,
-        buttons,
-        interactions: plan.platform.interactions ?? [],
-        blocks: [
-            { type: "text", text },
-            ...(media.length > 0 ? [{ type: "image", url: media[0].url }] : []),
-            { type: "buttons", buttons },
-        ],
-        ...(plan.ideImageAttach
-            ? {
-                ide_image_attach: {
-                    status: plan.ideImageAttach.status,
-                    local_path: plan.ideImageAttach.localPath,
-                    mirrors: plan.ideImageAttach.mirrors,
-                    mime_type: plan.ideImageAttach.mimeType,
-                    source: plan.ideImageAttach.source,
-                    ...(plan.ideImageAttach.caption ? { caption: plan.ideImageAttach.caption } : {}),
-                    must_render_reason: plan.ideImageAttach.mustRenderReason,
-                    ...(plan.ideImageAttach.error ? { error: plan.ideImageAttach.error } : {}),
-                    action: "agent_must_render_into_ide_chat",
-                    instructions: ideImageAttachBlock(plan.ideImageAttach).filter((l) => l.length > 0),
-                },
-            }
-            : {}),
-    };
+    const text = agentAction.arguments.message;
     const openclawMessage = {
         command: [
             "openclaw",
@@ -84,11 +57,34 @@ export function renderTelegram(plan, options) {
             "--presentation",
             JSON.stringify(presentation),
         ],
-        // Hint: agents that cannot run openclaw must stop and tell the user
-        // they lack the native Telegram buttons tool — never downgrade.
-        if_unavailable: "Current agent cannot run `openclaw message send`. Stop and tell the user the native Telegram inline-button tool is missing; do not downgrade to a markdown table or plain link.",
+        // Keep the same Checkout visible if native buttons are unavailable.
+        if_unavailable: "If `openclaw message send` is unavailable, send the same QR media and Checkout URL as ordinary Telegram content, report that inline buttons are unavailable, and stop. Do not create another Checkout.",
     };
-    out(JSON.stringify({ presentation, openclaw_message: openclawMessage }, null, 2) + "\n");
+    out(JSON.stringify({ presentation, agent_action: agentAction, openclaw_message: openclawMessage }, null, 2) + "\n");
+}
+export function buildOpenClawTelegramAction(plan, target) {
+    const buttons = buttonsFor(plan).map(nativeButton);
+    const media = collectTelegramMedia(plan);
+    const message = plan.kind === "payment_qr"
+        ? `ItPay payment QR — ${plan.summary}`
+        : plan.kind === "auth_qr"
+            ? `ItPay auth required — ${plan.summary}`
+            : `ItPay checkout QR — ${plan.summary}`;
+    const presentation = {
+        blocks: [{ type: "buttons", buttons }],
+    };
+    const nativeTarget = target.trim().replace(/^telegram:/i, "");
+    return {
+        tool: "message",
+        arguments: {
+            action: "send",
+            channel: "telegram",
+            target: nativeTarget,
+            message,
+            ...(media[0]?.url ? { media: media[0].url } : {}),
+            presentation,
+        },
+    };
 }
 export function renderTelegramInteraction(request, options) {
     const out = options.output ?? ((line) => process.stdout.write(line));
@@ -97,7 +93,7 @@ export function renderTelegramInteraction(request, options) {
         mimeType: item.mimeType ?? "image/png",
     }));
     const buttons = request.kind === "selector"
-        ? request.options.map((option) => selectorButton(request.id, option))
+        ? request.options.map((option) => nativeButton(selectorButton(request.id, option)))
         : [];
     const text = `${request.title} — ${request.prompt}`;
     const presentation = {

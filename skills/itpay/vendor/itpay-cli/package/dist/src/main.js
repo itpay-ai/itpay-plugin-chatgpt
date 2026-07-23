@@ -2,7 +2,7 @@
 // services/backend/internal/httpapi/handlers/*.go. Commands only
 // orchestrate; HTTP and rendering live in src/client and src/render.
 import { Command } from "commander";
-import { BackendOverrideError, CLI_VERSION, loadConfig, cartSessionPath, newBackendClient } from "./state/config.js";
+import { BackendOverrideError, CLI_VERSION, cliDistribution, loadConfig, cartSessionPath, newBackendClient } from "./state/config.js";
 import { DeviceAuthority, DeviceAuthorizationError, DeviceStateError } from "./state/device_authority.js";
 import { CartSession } from "./state/cart_session.js";
 import { defaultHostForAgentType, normalizeHost, validateContext } from "./state/client_context.js";
@@ -29,10 +29,17 @@ program
     .description("V3 ItPay CLI — one entry point for buy workflows and future sell workflows")
     .option("--agent-type <type>", "agent runtime type used for device enrollment and client-specific guidance")
     .version(CLI_VERSION);
-function withHost(value) {
-    const host = normalizeHost(value);
+function withHost(value, agentType, target) {
+    if (!value && agentType?.trim().toLowerCase() === "openclaw") {
+        throw new CommandContractError("host_required", "OpenClaw requires an explicit --host entry", "从当前可信 OpenClaw 会话上下文传入 --host；IM 入口同时传 --target。本次未创建或修改资源。", []);
+    }
+    const host = normalizeHost(value ?? defaultHostForAgentType(agentType));
     if (!host) {
-        throw new Error(`invalid --host "${value ?? ""}". Supported: terminal, codex, claude-code, telegram, discord, whatsapp, feishu, lark, plain-chat`);
+        throw new CommandContractError("invalid_host", `invalid --host "${value ?? ""}". Supported: terminal, codex, claude-code, telegram, discord, whatsapp, feishu, lark, plain-chat`, "传入受支持的展示 Host；本次未创建或修改资源。", []);
+    }
+    const contextError = agentType?.trim().toLowerCase() === "openclaw" ? validateContext(host, target) : undefined;
+    if (contextError) {
+        throw new CommandContractError(contextError.code, contextError.message, "从当前可信会话上下文补齐 --target；本次未创建或修改资源。", []);
     }
     return host;
 }
@@ -149,7 +156,7 @@ function reportCLIError(error, contract) {
             } : {}),
             instruction: incompatible
                 ? requiredCLIVersion
-                    ? "当前 CLI 与 Backend 合约不兼容。停止所有 ItPay 业务命令；只执行 recovery.command，将 @itpay/cli 更新到 Backend 指定的精确版本。安装完成后确认 itpay --version 与 result.required_cli_version 完全一致，再重新运行 readyz。不要安装 latest、猜测版本、切换 Agent Type 或删除 Device 身份。"
+                    ? distributionUpgradeInstruction()
                     : "立即向用户报告 error.message 并结束本次任务。Backend 未提供可验证的兼容 CLI 版本；不要运行其他 ItPay 或 npm 命令，不要猜测版本、切换 Agent Type 或删除 Device 身份。"
                 : backendInternal
                     ? "Backend 内部故障；立即停止并向用户报告。不要重试、检查或删除 Device 身份、创建替代 Execution、切换 Backend，或尝试 quote、checkout、cart、buy、pay 等付费路径。"
@@ -171,7 +178,7 @@ function reportCLIError(error, contract) {
             next: null,
             recovery: incompatible
                 ? requiredCLIVersion
-                    ? [{ command: `npm install -g @itpay/cli@${requiredCLIVersion}`, reason: "安装 Backend 指定的兼容 CLI 版本" }]
+                    ? [distributionUpgradeAction(requiredCLIVersion)]
                     : []
                 : backendInternal || providerConnectionUnavailable || providerTemporary || providerInputRejected || providerContractMismatch || providerRejected || capabilityInputInvalid
                     ? []
@@ -200,9 +207,28 @@ function docsErrorFallback(jsonOutput) {
     return {
         jsonOutput,
         code: "docs_unavailable",
-        instruction: "内置文档缺失或损坏；重新安装同版本 CLI 后重试。",
-        recovery: [{ command: `npm install -g @itpay/cli@${CLI_VERSION}`, reason: "恢复随包发布的文档" }],
+        instruction: "内置文档缺失或损坏；通过当前分发方式恢复同版本 CLI 后重试。",
+        recovery: [distributionUpgradeAction(CLI_VERSION)],
     };
+}
+function distributionUpgradeAction(version) {
+    switch (cliDistribution()) {
+        case "openclaw-skill-bundle":
+            return { command: "openclaw skills update itpay", reason: `更新包含 ItPay CLI ${version} 的 Skill bundle` };
+        case "kimi-plugin-bundle":
+            return {
+                command: "/plugins install https://github.com/itpay-ai/itpay-plugin-kimi-work",
+                reason: `更新包含 ItPay CLI ${version} 的 Kimi plugin`,
+            };
+        default:
+            return { command: `npm install -g @itpay/cli@${version}`, reason: "安装 Backend 指定的兼容 CLI 版本" };
+    }
+}
+function distributionUpgradeInstruction() {
+    if (cliDistribution() === "npm") {
+        return "当前 CLI 与 Backend 合约不兼容。停止所有 ItPay 业务命令；只执行 recovery.command，将 @itpay/cli 更新到 Backend 指定的精确版本。安装完成后确认 itpay --version 与 result.required_cli_version 完全一致，再重新运行 readyz。不要安装 latest、猜测版本、切换 Agent Type 或删除 Device 身份。";
+    }
+    return "当前平台 bundle 与 Backend 合约不兼容。停止所有 ItPay 业务命令；只执行 recovery.command，更新平台 Skill/plugin 后启动新会话，确认 itpay --version 与 result.required_cli_version 完全一致，再重新运行 readyz。不要运行 npm、猜测版本、切换 Agent Type 或删除 Device 身份。";
 }
 program
     .command("readyz")
@@ -298,8 +324,8 @@ skillCmd
         reportCLIError(error, {
             jsonOutput: Boolean(options.json),
             code: "skill_unavailable",
-            instruction: "内置 Skill 缺失或损坏；重新安装同版本 CLI 后重试。",
-            recovery: [{ command: `npm install -g @itpay/cli@${CLI_VERSION}`, reason: "恢复随包发布的 Skill" }],
+            instruction: "内置 Skill 缺失或损坏；通过当前分发方式恢复同版本 CLI 后重试。",
+            recovery: [distributionUpgradeAction(CLI_VERSION)],
         });
     }
 });
@@ -456,7 +482,7 @@ cart
             runCartAdd(session, { ...addOptions, jsonOutput });
         }
         else {
-            const host = withHost(options.host ?? defaultHostForAgentType(config.agentType));
+            const host = withHost(options.host, config.agentType, options.target);
             const contextError = validateContext(host, options.target);
             if (contextError) {
                 throw new CommandContractError(contextError.code, contextError.message, "补齐当前客户端所需的 Host/target；本次未创建或修改 Cart。", [{ command: "itpay cart add --help", reason: "查看客户端参数" }]);
@@ -692,7 +718,7 @@ program
         }
         const quantity = positiveInteger(options.quantity, "--quantity");
         const timeout = positiveInteger(options.timeout, "--timeout");
-        const host = withHost(options.host ?? defaultHostForAgentType(config.agentType));
+        const host = withHost(options.host, config.agentType, options.target);
         const contact = {};
         if (options.contactEmail)
             contact.email = options.contactEmail;
@@ -756,11 +782,11 @@ program
     .option("--json", "output compact JSON")
     .action(async (options) => {
     const config = loadConfig();
-    const host = withHost(options.host ?? defaultHostForAgentType(config.agentType));
     const session = CartSession.loadFromFile(cartSessionPath(), config.checkoutCurrency);
     const snap = session.show();
     const backend = newBackendClient(config);
     try {
+        const host = withHost(options.host, config.agentType, options.target);
         const { checkoutID, displayToken } = resolveCheckoutPresentationArgs({
             ...(options.id ? { requestedCheckoutID: options.id } : {}),
             ...(options.token ? { requestedDisplayToken: options.token } : {}),
@@ -771,6 +797,7 @@ program
             checkoutID,
             displayToken,
             host,
+            ...(options.target ? { target: options.target } : {}),
             ...(config.agentType ? { agentType: config.agentType } : {}),
             baseURL: config.baseURL,
             jsonOutput: Boolean(options.json),
@@ -817,7 +844,7 @@ program
         if (!displayToken) {
             throw new CommandContractError("checkout_token_required", "display token is required for this checkout", "提供同一 Checkout 的 display token；不要拼接其他 Checkout 的 token。", [{ command: "itpay next --json", reason: "恢复本机保存的同一 Checkout" }]);
         }
-        const host = withHost(options.host ?? defaultHostForAgentType(config.agentType));
+        const host = withHost(options.host, config.agentType, options.target);
         const contextError = validateContext(host, options.target);
         if (contextError) {
             throw new CommandContractError(contextError.code, contextError.message, "为当前 Host 提供有效 target；本次未创建 Payment Intent。", [
@@ -1024,7 +1051,7 @@ services
     const backend = newBackendClient(config);
     try {
         await runServicesStart(backend, serviceID, {
-            host: withHost(options.host ?? defaultHostForAgentType(config.agentType)),
+            host: withHost(options.host, config.agentType, options.target),
             ...(options.target ? { target: options.target } : {}),
             jsonOutput: Boolean(options.json),
         });
@@ -1150,7 +1177,7 @@ services
             ...(options.email ? { email: options.email } : {}),
             lockedInput: parseKeyValueList(options.input),
             resume: Boolean(options.resume),
-            host: withHost(options.host ?? defaultHostForAgentType(config.agentType)),
+            host: withHost(options.host, config.agentType, options.target),
             ...(config.agentType ? { agentType: config.agentType } : {}),
             ...(options.target ? { target: options.target } : {}),
             ...(options.qrFormat ? { qrFormat: options.qrFormat } : {}),
