@@ -18,7 +18,7 @@ itpay checkout [--id <checkout_id>] [--token <display_token>]
 
 省略 `--id/--token` 时只能使用本机保存的一组完整句柄；不得把其他 Checkout 的 token 拼接使用。
 
-`--host` 默认由 `--agent-type` 决定。`--target` 为现有 IM Host 兼容参数；当前五种 Agent Type 不需要它。`--json` 输出机器可读合同，不内嵌二维码字符画或图片二进制。
+`--host` 默认由 `--agent-type` 决定；`openclaw` 必须显式传当前入口。IM Host 必须提供 `--target`。`--json` 输出机器可读合同，不内嵌二维码字符画或图片二进制。
 
 ## 等待付款输出
 
@@ -26,7 +26,7 @@ itpay checkout [--id <checkout_id>] [--token <display_token>]
 {
   "status": "human_checkout_required",
   "result": { "checkout_id": "<checkout_id>", "payment": "pending", "amount": "<amount> <currency>" },
-  "handoff": { "url": "<checkout_url>", "qr_local_path": "<desktop_optional_path>", "qr_image_url": "<workbuddy_optional_absolute_https_png>", "markdown": "<desktop_optional_markdown>" },
+  "handoff": { "url": "<checkout_url>", "qr_local_path": "<desktop_optional_path>", "qr_image_url": "<chat_optional_absolute_https_png>", "markdown": "<desktop_optional_markdown>", "agent_action": "<openclaw_telegram_optional_native_message_action>" },
   "instruction": "<exact_agent_type_instruction>",
   "next": { "command": "itpay checkout --id <checkout_id> --token <display_token> --json", "reason": "稍后只查询同一 Checkout" },
   "recovery": []
@@ -72,5 +72,7 @@ token 缺失或不匹配时使用本机句柄恢复。只有请求的 Checkout �
 | `claude-code-desktop` | `url, qr_local_path, markdown`；原样发送 Markdown。 |
 | `claude-code-cli` | `url`；普通文本模式渲染终端二维码。 |
 | `workbuddy` | `url, qr_image_url?`；有二维码 URL 时按 `services checkout` 相同规则调用 `present_files`，没有时只发送 Checkout URL，不生成本地文件。 |
+| `kimi-code` | `url`；普通文本模式渲染标准终端二维码。 |
+| `openclaw` | Telegram 为 `url,qr_image_url,agent_action`；instruction 强制原样执行 action。`📋 已授权给我读` callback 触发同一 Checkout 查询，再由 Backend 决定是否进入 grant 读取；其他显式 Host 为 `url,qr_image_url`。 |
 
-完成、退款或失效状态下五种 Agent Type 都只返回同一状态和下一步，不渲染二维码。
+完成、退款或失效状态下所有 Agent Type 都只返回同一状态和下一步，不渲染二维码。OpenClaw 的 `--target` 必须使用原生 chat target 并传入展示层，不能添加 `telegram:` 前缀或被 CLI 参数解析后丢弃。

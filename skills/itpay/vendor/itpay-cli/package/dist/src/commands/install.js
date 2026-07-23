@@ -7,6 +7,8 @@ export const INSTALL_AGENT_TYPES = [
     "claude-code-desktop",
     "claude-code-cli",
     "workbuddy",
+    "kimi-code",
+    "openclaw",
 ];
 const INSTRUCTIONS = {
     "codex-desktop": "在 Codex Desktop 中始终传这个 Agent Type；付款时把返回的二维码和链接实际展示到当前对话。",
@@ -14,13 +16,12 @@ const INSTRUCTIONS = {
     "claude-code-desktop": "在 Claude Code Desktop 中始终传这个 Agent Type；付款时把返回的二维码和链接实际展示到当前对话。",
     "claude-code-cli": "在 Claude Code CLI 中始终传这个 Agent Type；付款交接只应显示在用户可见终端。",
     workbuddy: "在 WorkBuddy 中始终传这个 Agent Type。运行会持久化 ~/.itpay-v3 的 ItPay Bash 命令前，把 Shell 工具参数 dangerouslyDisableSandbox 设为 true；用户拒绝权限时停止，不要切换 Node、删除 identity 或处理 lock。Checkout 返回 qr_image_url 时，按当次 instruction 调用 present_files 在右侧打开二维码，不要检查本地二维码文件。",
+    "kimi-code": "保持 kimi-code Agent Type，使用标准 CLI 命令和终端付款交接；不要切换到其他平台身份。",
+    openclaw: "保持 openclaw Agent Type；每个展示命令都从当前可信会话上下文显式传 --host，IM 入口同时传 --target。Telegram 使用返回的原生 message action，其他入口展示标准二维码和付款链接。",
 };
 export function runInstall(target, options = {}) {
     if (!target || target === "list") {
-        const agentTypes = INSTALL_AGENT_TYPES.map((agentType) => ({
-            agent_type: agentType,
-            default_host: defaultHostForAgentType(agentType),
-        }));
+        const agentTypes = INSTALL_AGENT_TYPES.map(installDefinition);
         writeCommandEnvelope({
             status: "install_targets",
             result: { agent_types: agentTypes },
@@ -29,7 +30,7 @@ export function runInstall(target, options = {}) {
             recovery: [{ command: "itpay docs show install-and-setup", reason: "查看安装与环境说明" }],
         }, {
             ...options,
-            plainResult: agentTypes.map((item) => `${item.agent_type}: ${item.default_host}`),
+            plainResult: agentTypes.map((item) => `${item.agent_type}: ${item.default_host ?? "explicit --host required"}`),
         });
         return;
     }
@@ -40,10 +41,8 @@ export function runInstall(target, options = {}) {
     writeCommandEnvelope({
         status: "instructions_ready",
         result: {
-            agent_type: normalized,
-            default_host: defaultHostForAgentType(normalized),
+            ...installDefinition(normalized),
             default_api: DEFAULT_BASE_URL,
-            install_command: "npm install -g @itpay/cli",
         },
         instruction: INSTRUCTIONS[normalized],
         next: {
@@ -55,4 +54,10 @@ export function runInstall(target, options = {}) {
 }
 function isInstallAgentType(value) {
     return INSTALL_AGENT_TYPES.includes(value);
+}
+function installDefinition(agentType) {
+    if (agentType === "openclaw") {
+        return { agent_type: agentType, default_host: null, host_required: true, native_hosts: ["telegram"] };
+    }
+    return { agent_type: agentType, default_host: defaultHostForAgentType(agentType) ?? null };
 }

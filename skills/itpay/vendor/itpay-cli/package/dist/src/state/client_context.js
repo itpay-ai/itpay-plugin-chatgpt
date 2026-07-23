@@ -62,6 +62,8 @@ export function defaultHostForAgentType(agentType) {
         return "claude-code";
     if (normalized === "workbuddy")
         return "plain-chat";
+    if (normalized === "openclaw")
+        return undefined;
     return "terminal";
 }
 export function validateContext(host, target) {

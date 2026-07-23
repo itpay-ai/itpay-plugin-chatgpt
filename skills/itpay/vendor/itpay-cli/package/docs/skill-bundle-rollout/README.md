@@ -1,7 +1,7 @@
 # ItPay MCP 认证与多平台 Bundle Skill 落地方案
 
-状态：拟定，等待实施
-最后核对：2026-07-21
+状态：首批平台仓库与 bundle 同步已实施
+最后核对：2026-07-22
 
 ## 目标
 
@@ -15,6 +15,7 @@
 - [任务一：MCP 认证系统](./01-mcp-authentication.md)
 - [任务二：多平台 Bundle Skill 仓库与同步](./02-platform-bundle-repositories.md)
 - [各平台制作、验证和上传手册](./03-platform-publishing.md)
+- [首批平台执行状态（2026-07-22）](./04-first-wave-platforms.md)
 
 ## 已确认的当前状态
 

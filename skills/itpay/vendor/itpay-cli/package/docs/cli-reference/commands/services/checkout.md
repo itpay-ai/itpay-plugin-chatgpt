@@ -34,7 +34,7 @@ itpay services checkout <service_execution_id> --resume
     "locked_input": { "<required_key>": "<value>" },
     "amount": "<amount> <currency>"
   },
-  "handoff": { "url": "<checkout_url>", "qr_local_path": "<desktop_optional_path>", "qr_image_url": "<workbuddy_optional_absolute_https_png>", "markdown": "<desktop_optional_markdown>" },
+  "handoff": { "url": "<checkout_url>", "qr_local_path": "<desktop_optional_path>", "qr_image_url": "<chat_optional_absolute_https_png>", "markdown": "<desktop_optional_markdown>", "agent_action": "<openclaw_telegram_optional_native_message_action>" },
   "instruction": "<exact_agent_type_instruction>",
   "next": { "command": "itpay checkout --id <checkout_id> --token <display_token> --json", "reason": "仅在用户完成付款操作或要求查询后，读取同一 Checkout 的权威状态" },
   "recovery": []
@@ -82,6 +82,8 @@ itpay services checkout <service_execution_id> --resume
 | `claude-code-desktop` | `handoff={url,qr_local_path,markdown}`；把 `handoff.markdown` 原样发送到当前桌面对话。 |
 | `claude-code-cli` | `handoff={url}`；普通文本模式在用户可见终端渲染二维码。 |
 | `workbuddy` | `handoff={url,qr_image_url?}`；有 `qr_image_url` 时读取完整值并作为 `files` 数组唯一元素调用 `present_files`；没有时直接发送金额与 `url`，不得调用 `present_files`。两者随后都停止，不得检查或生成本地文件。 |
+| `kimi-code` | `handoff={url}`；复用标准 CLI 终端展示。 |
+| `openclaw` | 必须显式传 Host；Telegram 还必须传 OpenClaw 原生 Target，并返回必须原样执行的 `message` action；其他入口返回标准 `url,qr_image_url`。 |
 
 WorkBuddy 的准确 instruction 语义必须完整包含：
 
@@ -90,3 +92,5 @@ Backend 尚未确认付款。读取 handoff.qr_image_url 的完整字符串，�
 ```
 
 若 `qr_image_url` 缺失，准确 instruction 必须改为：说明本次没有可展示二维码，发送金额与 `handoff.url`，明确不要调用 `present_files`，然后遵守相同停止和付款证明规则。
+
+OpenClaw 的 Host/Target 校验必须发生在读取 execution 后、创建 Checkout 前；校验失败不能调用 Checkout 创建接口。Telegram `agent_action.arguments.presentation` 只使用 `blocks.buttons`，其中 `📱 手机点这儿支付` 使用扁平 `url`，`📋 已授权给我读` 使用 `value=itp:grant_confirmed:<checkout_id>`。准确 instruction 必须要求 Agent 立即用原生 `message` tool 原样执行 `handoff.agent_action`，不得改写 Presentation、换工具或用普通回复冒充按钮已发送。收到该 callback 表示用户声明已在收银台授权读取；Agent 立即执行 `next.command` 查询同一 Checkout，再只按 Backend 返回的 `next.command` 进入同一 Execution grant 流程。callback 不包含 display token，也不证明付款或 grant active；Backend 未返回 `grant_active` 前不得读取结果。
