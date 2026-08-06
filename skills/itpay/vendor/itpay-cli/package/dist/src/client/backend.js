@@ -35,8 +35,10 @@ export class BackendClient {
     createCheckout(input, idempotencyKey) {
         return this.http.post("/v1/checkouts", input, idempotencyKey ? { idempotencyKey } : undefined);
     }
-    getCheckoutPresentation(checkoutID, displayToken) {
+    getCheckoutPresentation(checkoutID, displayToken, locale) {
         const qs = new URLSearchParams({ display_token: displayToken });
+        if (locale)
+            qs.set("locale", locale);
         return this.http.get(`/v1/checkouts/${encodeURIComponent(checkoutID)}/presentation?${qs}`);
     }
     // --- Payment intents ---

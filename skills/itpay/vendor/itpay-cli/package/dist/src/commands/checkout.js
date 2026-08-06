@@ -4,12 +4,14 @@ import { ensureIdeImageAttach } from "../render/ide.js";
 import { buildAgentChatHandoff } from "../render/markdown.js";
 import { platformKeyForHost } from "../render/plan.js";
 import { renderTerminalQR } from "../render/qr.js";
+import { localizeCardURL, normalizeCardLocale } from "../render/locale.js";
 import { DEFAULT_BASE_URL } from "../state/config.js";
 import { buildCheckoutQRPlan } from "./buy.js";
 import { buildCheckoutHandoff, shouldPrepareLocalCheckoutImage } from "./checkout_handoff.js";
 import { writeCommandEnvelope } from "./guidance.js";
 export async function runCheckoutPresentation(backend, options) {
-    const presentation = await backend.getCheckoutPresentation(options.checkoutID, options.displayToken);
+    const locale = normalizeCardLocale(options.locale);
+    const presentation = await backend.getCheckoutPresentation(options.checkoutID, options.displayToken, locale === "en" ? locale : undefined);
     const host = options.host ?? "terminal";
     if (!checkoutNeedsHumanHandoff(presentation.checkout.status)) {
         const envelope = terminalCheckoutEnvelope(presentation);
@@ -21,15 +23,18 @@ export async function runCheckoutPresentation(backend, options) {
         return;
     }
     const checkoutURL = checkoutPageURL(options.baseURL, options.checkoutID, options.displayToken);
-    const qrPNGURL = absolutePublicURL(options.baseURL, presentation.qr_png_url ?? checkoutQRPNGURL(options.baseURL, options.checkoutID, options.displayToken));
-    const nextCommand = `itpay checkout --id ${options.checkoutID} --token ${options.displayToken} --json`;
+    const cardURL = localizeCardURL(absolutePublicURL(options.baseURL, presentation.card_url ?? checkoutCardURL(options.baseURL, options.checkoutID, options.displayToken)), locale);
+    const qrPNGURL = absolutePublicURL(options.baseURL, presentation.card_png_url ?? presentation.qr_png_url ?? checkoutCardPNGURL(options.baseURL, options.checkoutID, options.displayToken));
+    const localizedPNGURL = localizeCardURL(qrPNGURL, locale);
+    const nextCommand = `itpay checkout --id ${options.checkoutID} --token ${options.displayToken}${locale === "en" ? " --locale en" : ""} --json`;
     const plan = buildCheckoutQRPlan({
         host,
         checkoutID: options.checkoutID,
         checkoutURL,
+        cardURL,
         displayToken: options.displayToken,
         qrPayload: checkoutURL,
-        qrPNGURL,
+        qrPNGURL: localizedPNGURL,
         nextAction: presentation.checkout.next_action,
         orderItems: presentation.items.map((item) => ({
             title: item.title,
@@ -62,7 +67,7 @@ function pendingCheckoutEnvelope(presentation, checkoutURL, plan, nextCommand, a
     const amount = formatMoney(presentation.checkout.amount_minor, presentation.checkout.currency);
     const presentationHandoff = buildCheckoutHandoff({
         platform,
-        url: checkoutURL,
+        url: plan.linkOnlyURL ?? checkoutURL,
         amount,
         plan,
         ...(agentType ? { agentType } : {}),
@@ -138,9 +143,13 @@ function checkoutPageURL(baseURL, checkoutID, displayToken) {
     const root = publicRoot(baseURL);
     return `${root}/checkout/${encodeURIComponent(checkoutID)}?display_token=${encodeURIComponent(displayToken)}`;
 }
-function checkoutQRPNGURL(baseURL, checkoutID, displayToken) {
+function checkoutCardURL(baseURL, checkoutID, displayToken) {
     const root = publicRoot(baseURL);
-    return `${root}/v1/checkouts/${encodeURIComponent(checkoutID)}/qr.png?display_token=${encodeURIComponent(displayToken)}`;
+    return `${root}/v1/checkouts/${encodeURIComponent(checkoutID)}/card?display_token=${encodeURIComponent(displayToken)}`;
+}
+function checkoutCardPNGURL(baseURL, checkoutID, displayToken) {
+    const root = publicRoot(baseURL);
+    return `${root}/v1/checkouts/${encodeURIComponent(checkoutID)}/card.png?display_token=${encodeURIComponent(displayToken)}`;
 }
 function publicRoot(baseURL) {
     return (baseURL ?? DEFAULT_BASE_URL).replace(/\/$/, "");
