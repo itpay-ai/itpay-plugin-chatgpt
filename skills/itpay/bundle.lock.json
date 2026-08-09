@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "package": "@itpay/cli",
-  "version": "2.0.25",
+  "version": "2.0.26",
   "format": "npm-tree",
-  "npmIntegrity": "sha512-E3++YcfCY6RHSXgZsNDtAV2Lj+jMAAVTd93j+NfMo4YFue6UjJvVhFYZLnWOiEj8t4S0awwKePiJ2lqNz0HNFg==",
-  "sourceGitSha": "f8fd62a8707919da77e7a792103a23b40b0e252f",
-  "generatedAt": "2026-08-09T02:26:59.277Z",
+  "npmIntegrity": "sha512-0zHa7zORCHpx8bLbJIpK4yQFjV/sJ36cVeRs6gLJui4O9npCZEkpw0SVOuSoTAxxHQt7KpQDA7+y/dML2OLpgA==",
+  "sourceGitSha": "4ad8a85d62ba81105e84e2133e03740c22abe25d",
+  "generatedAt": "2026-08-09T15:45:28.015Z",
   "node": ">=18",
   "bundleDirectory": "vendor/itpay-cli",
-  "dependencyLockSha256": "62669b9668357a4cf191f2f61cefa84e26eb0b7ed0b23f0433322c7dc7331a73"
+  "dependencyLockSha256": "854869b55ab8342e9f8703cffb2efcf76c6519ff85dffddedd10e17d44fcfc08"
 }
