@@ -40,7 +40,11 @@ export function runSkillShow(name, options = {}) {
 }
 function findSkillPath() {
     if (process.env.ITPAY_CLI_SKILLS_DIR) {
-        return resolve(process.env.ITPAY_CLI_SKILLS_DIR, ITPAY_SKILL, "SKILL.md");
+        const configuredRoot = resolve(process.env.ITPAY_CLI_SKILLS_DIR);
+        const directPath = resolve(configuredRoot, "SKILL.md");
+        if (existsSync(directPath))
+            return directPath;
+        return resolve(configuredRoot, ITPAY_SKILL, "SKILL.md");
     }
     const packagePath = resolve(commandDir, "..", "..", "..", "skills", ITPAY_SKILL, "SKILL.md");
     if (existsSync(packagePath))
