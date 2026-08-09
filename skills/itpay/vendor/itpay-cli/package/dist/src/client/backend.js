@@ -35,8 +35,10 @@ export class BackendClient {
     createCheckout(input, idempotencyKey) {
         return this.http.post("/v1/checkouts", input, idempotencyKey ? { idempotencyKey } : undefined);
     }
-    getCheckoutPresentation(checkoutID, displayToken) {
+    getCheckoutPresentation(checkoutID, displayToken, locale) {
         const qs = new URLSearchParams({ display_token: displayToken });
+        if (locale)
+            qs.set("locale", locale);
         return this.http.get(`/v1/checkouts/${encodeURIComponent(checkoutID)}/presentation?${qs}`);
     }
     // --- Payment intents ---
@@ -82,16 +84,16 @@ export class BackendClient {
         return this.http.post("/v1/service-executions", input);
     }
     invokeServiceCapability(serviceExecutionID, capabilityID, input) {
-        return this.http.post(`/v1/service-executions/${encodeURIComponent(serviceExecutionID)}/capabilities/${encodeURIComponent(capabilityID)}/invoke`, input);
+        return this.http.post(`/v1/service-executions/${encodeURIComponent(serviceExecutionID)}/capabilities/${encodeURIComponent(capabilityID)}/invoke`, input, { replaySafe: Boolean(input.idempotency_key) });
     }
     recordServiceExecutionAction(serviceExecutionID, input) {
         return this.http.post(`/v1/service-executions/${encodeURIComponent(serviceExecutionID)}/actions`, input);
     }
     createServiceExecutionCheckout(serviceExecutionID, input) {
-        return this.http.post(`/v1/service-executions/${encodeURIComponent(serviceExecutionID)}/checkout`, input);
+        return this.http.post(`/v1/service-executions/${encodeURIComponent(serviceExecutionID)}/checkout`, input, { replaySafe: true });
     }
     prepareServiceQuote(serviceExecutionID, input) {
-        return this.http.post(`/v1/service-executions/${encodeURIComponent(serviceExecutionID)}/quotes`, input);
+        return this.http.post(`/v1/service-executions/${encodeURIComponent(serviceExecutionID)}/quotes`, input, { replaySafe: true });
     }
     getServiceExecution(serviceExecutionID) {
         return this.http.get(`/v1/service-executions/${encodeURIComponent(serviceExecutionID)}`);

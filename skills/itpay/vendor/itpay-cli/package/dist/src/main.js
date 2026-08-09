@@ -7,6 +7,7 @@ import { DeviceAuthority, DeviceAuthorizationError, DeviceStateError } from "./s
 import { CartSession } from "./state/cart_session.js";
 import { defaultHostForAgentType, normalizeHost, validateContext } from "./state/client_context.js";
 import { HttpError } from "./client/http.js";
+import { HttpTransportError } from "./client/transport.js";
 import { runReadyz } from "./commands/readyz.js";
 import { runBuy } from "./commands/buy.js";
 import { runCatalogList } from "./commands/catalog.js";
@@ -93,6 +94,7 @@ function reportCLIError(error, contract) {
     const backendOverrideError = error instanceof BackendOverrideError ? error : undefined;
     const deviceError = error instanceof DeviceAuthorizationError ? error : undefined;
     const stateError = error instanceof DeviceStateError ? error : undefined;
+    const transportError = error instanceof HttpTransportError ? error : undefined;
     const httpRecovery = errorRecoveryActions(error).map((action) => ({
         command: action.command,
         reason: action.reason ?? action.label,
@@ -134,13 +136,18 @@ function reportCLIError(error, contract) {
         writeCommandEnvelope({
             status: "error",
             error: {
-                code: incompatible ? "backend_contract_incompatible" : backendOverrideError?.code ?? commandError?.code ?? (error instanceof HttpError ? error.code : stateError?.code ?? deviceError?.code ?? contract?.code ?? "command_failed"),
+                code: incompatible ? "backend_contract_incompatible" : backendOverrideError?.code ?? commandError?.code ?? (error instanceof HttpError ? error.code : transportError?.code ?? stateError?.code ?? deviceError?.code ?? contract?.code ?? "command_failed"),
                 message: error instanceof Error ? error.message : String(error),
             },
             ...(requiredCLIVersion ? {
                 result: {
                     current_cli_version: CLI_VERSION,
                     required_cli_version: requiredCLIVersion,
+                },
+            } : transportError ? {
+                result: {
+                    attempts: transportError.attempts,
+                    automatic_retry_performed: transportError.attempts > 1,
                 },
             } : error instanceof HttpError && error.payload?.service_execution_id ? {
                 result: {
@@ -172,9 +179,13 @@ function reportCLIError(error, contract) {
                                         ? "Provider 拒绝了本次请求，但未声明这是输入错误；向用户逐字报告 error.message 和 result.quota 并停止。不要修改输入、不要重试、不要创建新 Execution。"
                                         : capabilityInputInvalid
                                             ? "输入未通过本地校验，上游尚未被调用且用户额度未变化。向用户逐字报告 error.message 并停止，不要原样重试或运行其他恢复命令。用户提供修正后的输入后，继续使用当前未结束的 Execution。"
-                                            : backendOverrideError
-                                                ? "移除 ITPAY_BACKEND_URL 使用正式环境，或准确设置为 https://dev.itpay.ai。"
-                                                : commandError?.instruction ?? authorizationInstruction ?? contract?.instruction ?? "检查命令参数后重试。",
+                                            : transportError
+                                                ? transportError.attempts > 1
+                                                    ? "临时网络故障；CLI 已仅对可安全重放的操作完成有限自动重试，但仍未获得完整响应。按 recovery 查询同一资源的权威状态；不要创建替代 Checkout、Execution、Payment 或 Refund。"
+                                                    : "网络在完整响应前中断；当前写操作没有安全重放合同，因此 CLI 未自动重试。按 recovery 查询权威状态；不要原样重放或创建替代 Checkout、Execution、Payment 或 Refund。"
+                                                : backendOverrideError
+                                                    ? "移除 ITPAY_BACKEND_URL 使用正式环境，或准确设置为 https://dev.itpay.ai。"
+                                                    : commandError?.instruction ?? authorizationInstruction ?? contract?.instruction ?? "检查命令参数后重试。",
             next: null,
             recovery: incompatible
                 ? requiredCLIVersion
@@ -193,6 +204,11 @@ function reportCLIError(error, contract) {
     if (error instanceof HttpError) {
         process.stderr.write(`[${error.status}] ${error.code}: ${error.message}\n`);
         printErrorRecovery(error, (text) => process.stderr.write(text));
+        process.exitCode = 1;
+        return;
+    }
+    if (error instanceof HttpTransportError) {
+        process.stderr.write(`[${error.code}] ${error.message}\n`);
         process.exitCode = 1;
         return;
     }
@@ -691,6 +707,7 @@ program
     .option("--require-contact <fields>", "comma-separated required contact fields: email,phone")
     .option("--qr-format <format>", "unicode|utf8|ansi|terminal")
     .option("--qr-file <path>", "explicit QR file path")
+    .option("--locale <locale>", "payment card language: zh-CN|en", "zh-CN")
     .option("--pay", "also create a payment intent and optionally wait for verification")
     .option("--method <alipay|wechatpay>", "payment method for --pay", "alipay")
     .option("--no-wait", "do not wait for payment verification after --pay")
@@ -752,6 +769,7 @@ program
             ...(requiredContactFields ? { requiredContactFields } : {}),
             ...(options.qrFormat ? { qrFormat: options.qrFormat } : {}),
             ...(options.qrFile ? { qrFilePath: options.qrFile } : {}),
+            locale: options.locale,
             ...(options.pay ? { pay: true, payMethod: options.method, noWait: options.wait === false, payTimeoutSec: timeout } : {}),
             ...(jsonOutput ? { jsonOutput: true } : {}),
         };
@@ -779,6 +797,7 @@ program
     .option("--target <target>")
     .option("--id <checkout_id>")
     .option("--token <display_token>")
+    .option("--locale <locale>", "payment card language: zh-CN|en", "zh-CN")
     .option("--json", "output compact JSON")
     .action(async (options) => {
     const config = loadConfig();
@@ -800,6 +819,7 @@ program
             ...(options.target ? { target: options.target } : {}),
             ...(config.agentType ? { agentType: config.agentType } : {}),
             baseURL: config.baseURL,
+            locale: options.locale,
             jsonOutput: Boolean(options.json),
         });
     }
@@ -1166,6 +1186,7 @@ services
     .option("--target <target>", "chat id / channel id / open id for IM hosts")
     .option("--qr-format <format>", "unicode|utf8|ansi|terminal")
     .option("--qr-file <path>", "explicit QR file path")
+    .option("--locale <locale>", "payment card language: zh-CN|en", "zh-CN")
     .option("--json", "output JSON instead of terminal text")
     .action(async (serviceExecutionID, options) => {
     const config = loadConfig();
@@ -1182,6 +1203,7 @@ services
             ...(options.target ? { target: options.target } : {}),
             ...(options.qrFormat ? { qrFormat: options.qrFormat } : {}),
             ...(options.qrFile ? { qrFilePath: options.qrFile } : {}),
+            locale: options.locale,
             jsonOutput: Boolean(options.json),
             persistHandoff: (handoff) => {
                 session.rememberCheckout({

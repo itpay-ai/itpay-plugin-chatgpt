@@ -6,6 +6,10 @@
 import { ideImageAttachBlock } from "./ide.js";
 export function renderPlainChat(plan, options = {}) {
     const out = options.output ?? ((line) => process.stdout.write(line));
+    if (plan.linkOnlyURL) {
+        out(`${plan.summary}\nopen: ${plan.linkOnlyURL}\n`);
+        return;
+    }
     const brand = plan.preferredQRSources.find((src) => src.length > 0);
     const lines = [];
     lines.push(plan.summary);

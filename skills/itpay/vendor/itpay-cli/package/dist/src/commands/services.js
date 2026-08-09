@@ -3,6 +3,7 @@ import { validateContext } from "../state/client_context.js";
 import { dispatchRender } from "../render/index.js";
 import { ensureIdeImageAttach } from "../render/ide.js";
 import { buildCheckoutHandoff, shouldPrepareLocalCheckoutImage } from "./checkout_handoff.js";
+import { localizeCardURL, normalizeCardLocale } from "../render/locale.js";
 import { buildAgentChatHandoff } from "../render/markdown.js";
 import { platformKeyForHost } from "../render/plan.js";
 import { renderTerminalQR } from "../render/qr.js";
@@ -413,14 +414,18 @@ export async function runServicesCheckout(backend, config, serviceExecutionID, c
     const checkout = response.checkout;
     const checkoutID = checkout.checkout.checkout_id;
     const displayToken = checkout.display_token;
+    const locale = normalizeCardLocale(options.locale);
     const checkoutURL = tokenizedCheckoutURL(checkout.checkout_url, displayToken, checkout.qr_payload);
+    const cardURL = localizeCardURL(absolutePublicURL(config.baseURL, checkout.card_url ?? fallbackCardURL(config.baseURL, checkoutID, displayToken)), locale);
+    const cardPNGURL = localizeCardURL(absolutePublicURL(config.baseURL, checkout.card_png_url ?? checkout.qr_png_url ?? fallbackCardPNGURL(config.baseURL, checkoutID, displayToken)), locale);
     const plan = buildCheckoutQRPlan({
         host,
         checkoutID,
         checkoutURL,
+        cardURL,
         displayToken,
         qrPayload: checkout.qr_payload,
-        ...(checkout.qr_png_url ? { qrPNGURL: absolutePublicURL(config.baseURL, checkout.qr_png_url) } : {}),
+        qrPNGURL: cardPNGURL,
         nextAction: checkout.checkout.next_action,
         orderItems: response.cart.items.map((item) => ({
             title: item.title,
@@ -430,6 +435,7 @@ export async function runServicesCheckout(backend, config, serviceExecutionID, c
         })),
         orderCurrency: checkout.checkout.currency,
         ...(options.agentType ? { agentType: options.agentType } : {}),
+        locale,
     });
     options.persistHandoff?.({
         serviceExecutionID,
@@ -458,7 +464,7 @@ export async function runServicesCheckout(backend, config, serviceExecutionID, c
             ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
         });
     }
-    const envelope = buildServicesCheckoutEnvelope(response, checkoutURL, plan, config.baseURL, options.agentType, options.target);
+    const envelope = buildServicesCheckoutEnvelope(response, checkoutURL, plan, options.agentType, options.target);
     const plainResult = [
         `service_execution_id: ${response.binding.service_execution_id}`,
         `checkout_id: ${checkoutID}`,
@@ -939,18 +945,18 @@ function parseValue(value) {
         return Number(value);
     return value;
 }
-function buildServicesCheckoutEnvelope(response, checkoutURL, plan, baseURL, agentType, target) {
+function buildServicesCheckoutEnvelope(response, checkoutURL, plan, agentType, target) {
     const checkout = response.checkout;
     const platform = platformKeyForHost(plan.host);
     const amount = formatMoney(checkout.checkout.amount_minor, checkout.checkout.currency);
     const presentationHandoff = buildCheckoutHandoff({
         platform,
-        url: checkoutURL,
+        url: plan.linkOnlyURL ?? checkoutURL,
         amount,
         plan,
         ...(agentType ? { agentType } : {}),
         ...(target ? { target } : {}),
-        ...(checkout.qr_png_url ? { qrImageURL: absolutePublicURL(baseURL, checkout.qr_png_url) } : {}),
+        ...(plan.preferredQRSources[0] ? { qrImageURL: plan.preferredQRSources[0] } : {}),
         ...(plan.ideImageAttach?.status === "downloaded" && plan.ideImageAttach.localPath
             ? { localPath: plan.ideImageAttach.localPath }
             : {}),
@@ -968,11 +974,18 @@ function buildServicesCheckoutEnvelope(response, checkoutURL, plan, baseURL, age
         handoff: presentationHandoff.handoff,
         instruction: presentationHandoff.instruction,
         next: {
-            command: `itpay checkout --id ${checkout.checkout.checkout_id} --token ${checkout.display_token} --json`,
+            command: plan.afterActionCommand ?? `itpay checkout --id ${checkout.checkout.checkout_id} --token ${checkout.display_token} --json`,
             reason: "仅在用户完成付款操作或要求查询后，读取同一 Checkout 的权威状态",
         },
         recovery: [],
     };
+}
+function fallbackCardURL(baseURL, checkoutID, displayToken) {
+    const root = baseURL.replace(/\/$/, "");
+    return `${root}/v1/checkouts/${encodeURIComponent(checkoutID)}/card?display_token=${encodeURIComponent(displayToken)}`;
+}
+function fallbackCardPNGURL(baseURL, checkoutID, displayToken) {
+    return `${fallbackCardURL(baseURL, checkoutID, displayToken)}.png`.replace("/card?", "/card.png?");
 }
 function checkoutCapabilityID(response, fallback = "") {
     return response.capability_id || fallback;

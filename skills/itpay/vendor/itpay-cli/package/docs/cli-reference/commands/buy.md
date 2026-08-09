@@ -40,6 +40,7 @@ itpay buy \
 --require-contact <email,phone>
 --host <host>
 --target <target>
+--locale <zh-CN|en>
 --qr-format <unicode|utf8|ansi|terminal>
 --qr-file <path>
 --pay
@@ -64,6 +65,7 @@ itpay buy \
 | `--require-contact` | 否 | 只接受 `email`、`phone`；缺失时先询问用户，禁止 Agent 编造。 |
 | `--host` | 条件必填 | 通常由 `--agent-type` 推导；`openclaw` 必须显式传当前入口。只改变 handoff 展示，不改变交易事实。 |
 | `--target` | 条件必填 | 要求目标会话的 IM Host 必须提供；OpenClaw 从当前可信会话上下文传入。 |
+| `--locale` | 否 | Payment Card 语言，默认 `zh-CN`；可使用 `en`。只改变 Card 文案，不改变交易事实。 |
 | `--qr-format` | 否 | 非 JSON 的终端渲染选项。 |
 | `--qr-file` | 否 | 非 JSON handoff 的明确二维码文件路径。 |
 | `--pay` | 否 | 创建 Payment Intent 的集成/运维入口；普通 Agent 流程只展示 Checkout。 |
@@ -153,7 +155,7 @@ itpay buy \
 | `buy_parameter_invalid` | quantity/timeout 非正整数，或 `--no-wait` 未配 `--pay`。 | 修正参数；本次不创建资源。 |
 | `service_quote_required` | Cart 含尚未绑定 Quote 的 Service Execution。 | 原样执行返回的 `services next <id> --json`；不要绕过 Quote 输入校验。 |
 | `idempotency_conflict` | 同一幂等操作被用于不同请求。 | 保留句柄并执行 `itpay next --json`，不要换键重建。 |
-| `buy_failed` | 网络或未知后端错误。 | 先执行 `itpay next --json` 或 `cart next --json` 恢复现有资源。 |
+| `buy_failed` | 非传输层的未知命令错误。 | 先执行 `itpay next --json` 或 `cart next --json` 恢复现有资源。传输失败使用 conventions 中的稳定 `network_*` 错误码。 |
 
 所有参数错误都必须在 HTTP 和本地 Cart 变更前被拒绝。服务 Cart 只有每条 service-backed line 都绑定有效 Quote 时才能创建 Checkout；付款后 Backend 按 Order Item 分别推进 Execution。
 
@@ -165,7 +167,7 @@ itpay buy \
 | `codex-cli` | `terminal` | `url` | 非 JSON 模式在用户可见终端渲染二维码；始终保留付款链接。 |
 | `claude-code-desktop` | `claude-code` | `url`、可用时 `qr_local_path` 和 `markdown` | 把 Markdown handoff 发到当前桌面对话，不能只输出本地路径。 |
 | `claude-code-cli` | `terminal` | `url` | 在用户可见终端展示；不能声称桌面对话已收到图片。 |
-| `workbuddy` | `plain-chat` | `url, qr_image_url?` | 有 `qr_image_url` 时调用 `present_files`；没有时只发送金额和 `url` 且不调用工具。两者都停止，不读取本地文件。 |
+| `workbuddy` | `plain-chat` | `url` | `url` 是完整渲染的 HTML Card Link；直接发送/打开，不调用 `present_files`，然后停止。 |
 | `kimi-code` | `terminal` | `url` | 使用标准 CLI 非 JSON 终端二维码和链接。 |
 | `openclaw` | 必须显式 | Telegram 返回 `url,qr_image_url,agent_action`；其他入口返回 `url,qr_image_url` | Telegram 执行原生 `message` action；其他入口直接展示图片和链接。 |
 

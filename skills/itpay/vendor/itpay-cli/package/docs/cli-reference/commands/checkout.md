@@ -13,12 +13,14 @@
 
 ```bash
 itpay checkout [--id <checkout_id>] [--token <display_token>]
-  [--host <host>] [--target <target>] [--json]
+  [--host <host>] [--target <target>] [--locale <zh-CN|en>] [--json]
 ```
 
 省略 `--id/--token` 时只能使用本机保存的一组完整句柄；不得把其他 Checkout 的 token 拼接使用。
 
 `--host` 默认由 `--agent-type` 决定；`openclaw` 必须显式传当前入口。IM Host 必须提供 `--target`。`--json` 输出机器可读合同，不内嵌二维码字符画或图片二进制。
+
+`--locale` 默认 `zh-CN`，可显式使用 `en`。它只改变重新渲染的 Card 文案，不改变 Checkout、付款、授权或恢复状态。
 
 ## 等待付款输出
 
@@ -71,7 +73,7 @@ token 缺失或不匹配时使用本机句柄恢复。只有请求的 Checkout �
 | `codex-cli` | `url`；普通文本模式渲染终端二维码。 |
 | `claude-code-desktop` | `url, qr_local_path, markdown`；原样发送 Markdown。 |
 | `claude-code-cli` | `url`；普通文本模式渲染终端二维码。 |
-| `workbuddy` | `url, qr_image_url?`；有二维码 URL 时按 `services checkout` 相同规则调用 `present_files`，没有时只发送 Checkout URL，不生成本地文件。 |
+| `workbuddy` | 只返回 `url`；它是完整渲染的 HTML Card Link。直接打开，不调用 `present_files`，不生成本地文件。 |
 | `kimi-code` | `url`；普通文本模式渲染标准终端二维码。 |
 | `openclaw` | Telegram 为 `url,qr_image_url,agent_action`；instruction 强制原样执行 action。`📋 已授权给我读` callback 触发同一 Checkout 查询，再由 Backend 决定是否进入 grant 读取；其他显式 Host 为 `url,qr_image_url`。 |
 
