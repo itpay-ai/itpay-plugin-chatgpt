@@ -26,7 +26,7 @@ export function writeCommandEnvelope(value, options = {}) {
         return;
     }
     out(`${qualified.status}\n`);
-    const facts = "error" in qualified ? qualified.error : qualified.result;
+    const facts = "error" in qualified ? qualified.error : qualified.result ?? {};
     if (options.plainResult) {
         for (const line of options.plainResult)
             out(`${line}\n`);
