@@ -108,12 +108,26 @@ export class DeviceAuthority {
     }
     async ensureRegistrationAgentType(registration, agentType, privateKey, forceSession) {
         if (!registration.agentInstances[agentType]) {
-            const existingType = firstAgentType(registration);
-            if (!existingType)
+            const existingTypes = Object.keys(registration.agentInstances).sort();
+            if (existingTypes.length === 0)
                 throw new Error("device has no registered agent instance");
-            const existingSession = await this.ensureSession(registration, existingType, privateKey, forceSession);
-            const registered = await this.signedJSON("/v1/agent-instances", { agent_type: agentType }, registration, existingType, existingSession, privateKey);
-            registration.agentInstances[agentType] = registered.agent_instance_id;
+            let revokedError;
+            for (const existingType of existingTypes) {
+                try {
+                    const existingSession = await this.ensureSession(registration, existingType, privateKey, forceSession);
+                    const registered = await this.signedJSON("/v1/agent-instances", { agent_type: agentType }, registration, existingType, existingSession, privateKey);
+                    registration.agentInstances[agentType] = registered.agent_instance_id;
+                    break;
+                }
+                catch (error) {
+                    if (!(error instanceof DeviceAuthorizationError) || error.code !== "agent_device_revoked")
+                        throw error;
+                    delete registration.sessions[existingType];
+                    revokedError = error;
+                }
+            }
+            if (!registration.agentInstances[agentType])
+                throw revokedError ?? new Error("device has no active registered agent instance");
         }
         return this.ensureSession(registration, agentType, privateKey, forceSession);
     }
@@ -240,7 +254,6 @@ export class DeviceStateError extends Error {
 function emptyDeviceState() {
     return { schemaVersion: "itpay.device.v2", registrations: {} };
 }
-function firstAgentType(state) { return Object.keys(state.agentInstances)[0]; }
 function canMovePastLegacyRegistration(error) {
     return error instanceof DeviceAuthorizationError && (error.code === "agent_device_revoked" || error.status === 404);
 }
