@@ -65,6 +65,23 @@ export class BackendClient {
         }
         return this.http.get(`/v1/me/orders?${qs}`, bearer ? { bearer } : {});
     }
+    getVaultAccountStatus() {
+        return this.http.get("/v1/me/account-status");
+    }
+    listBuyerVaultArtifacts(input) {
+        const qs = new URLSearchParams({ limit: String(input.limit) });
+        if (input.query)
+            qs.set("query", input.query);
+        if (input.cursor)
+            qs.set("cursor", input.cursor);
+        return this.http.get(`/v1/me/vault-artifacts?${qs}`);
+    }
+    createVaultAccessRequest(input) {
+        return this.http.post("/v1/vault/access-requests", input);
+    }
+    readBuyerVaultArtifact(artifactRef, sections) {
+        return this.http.post(`/v1/vault/artifacts/${encodeURIComponent(artifactRef)}/reads`, sections.length ? { sections } : {});
+    }
     // --- Refund ---
     createRefund(orderID, input, bearer, idempotencyKey) {
         const options = { ...(bearer ? { bearer } : {}), ...(idempotencyKey ? { idempotencyKey } : {}) };

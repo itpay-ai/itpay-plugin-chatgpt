@@ -1,6 +1,6 @@
 {
   "name": "itpay-plugin-chatgpt",
-  "version": "2.0.25",
+  "version": "2.0.27",
   "description": "Use ItPay MCP workflows in ChatGPT and a bundled ItPay CLI in local Codex.",
   "author": {
     "name": "itpay.ai",
