@@ -200,7 +200,7 @@ export async function downloadBrandQRToTmp(url, kind, id, options = {}) {
                 source: url,
                 status: "downloaded",
                 ...(options.caption ? { caption: options.caption } : {}),
-                mustRenderReason: IDE_ATTACH_REASON,
+                mustRenderReason: options.mustRenderReason ?? IDE_ATTACH_REASON,
             },
         };
     }

@@ -58,11 +58,13 @@ export class BackendClient {
     getOrderDeliveryAccess(orderID) {
         return this.http.get(`/v1/orders/${encodeURIComponent(orderID)}/delivery-access`);
     }
-    listAccountOrders(limit, status, bearer) {
+    listAccountOrders(limit, status, bearer, cursor) {
         const qs = new URLSearchParams({ limit: String(limit) });
         if (status) {
             qs.set("status", status);
         }
+        if (cursor)
+            qs.set("cursor", cursor);
         return this.http.get(`/v1/me/orders?${qs}`, bearer ? { bearer } : {});
     }
     getVaultAccountStatus() {
