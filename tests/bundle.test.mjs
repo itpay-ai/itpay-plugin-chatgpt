@@ -24,6 +24,9 @@ test("ChatGPT uses only read-only MCP while local Codex keeps the CLI", () => {
   assert.match(skill, /ChatGPT MCP cannot purchase, pay, or refund/);
   assert.match(skill, /Local Codex CLI/);
   assert.match(skill, /Never ask for, display, or store an OAuth token/);
+  assert.match(skill, /Route The Human's Intent/);
+  assert.match(skill, /Run technology for the human/);
+  assert.doesNotMatch(skill, /npm install -g/);
   assert.deepEqual(manifest.interface.capabilities, ["Read"]);
   assert.doesNotMatch(JSON.stringify(manifest.interface), /buy|purchase|Checkout|refund/i);
   assert.match(openAI, /list my Vault artifacts/);

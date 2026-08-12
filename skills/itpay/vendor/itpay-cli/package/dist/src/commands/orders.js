@@ -42,7 +42,6 @@ export async function runListOrders(backend, config, options) {
         }
         throw error;
     }
-    const accountSession = "orders" in response;
     const orders = "orders" in response
         ? response.orders.map((order) => ({
             order_id: order.order_id,
@@ -69,9 +68,7 @@ export async function runListOrders(backend, config, options) {
             : "当前账号没有符合条件的订单；不要猜测订单或自动开始购买。",
         next: "items" in response && response.next_cursor
             ? { command: ordersPageCommand(response.next_cursor, options), reason: "读取下一页订单摘要" }
-            : latest && accountSession && "order_id" in latest
-                ? { command: `itpay order ${latest.order_id} --json`, reason: "读取网页登录账号的最新订单" }
-                : null,
+            : null,
         recovery: [],
     };
     writeCommandEnvelope(envelope, {
