@@ -1,6 +1,6 @@
 {
   "name": "itpay-plugin-chatgpt",
-  "version": "2.0.32",
+  "version": "2.0.34",
   "description": "Read Buyer-owned ItPay orders and Vault content in ChatGPT, or use the bundled CLI in local Codex.",
   "author": {
     "name": "itpay.ai",
