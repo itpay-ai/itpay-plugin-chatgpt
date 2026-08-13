@@ -8,7 +8,7 @@ import { buildAgentChatHandoff } from "../render/markdown.js";
 import { platformKeyForHost } from "../render/plan.js";
 import { renderTerminalQR } from "../render/qr.js";
 import { buildCheckoutQRPlan } from "./buy.js";
-import { CommandContractError, isTerminalServiceExecutionStatus, writeCommandEnvelope, } from "./guidance.js";
+import { appendOptionalFeedbackInvitation, CommandContractError, isTerminalServiceExecutionStatus, writeCommandEnvelope, } from "./guidance.js";
 const serviceActionStatuses = new Set(["pending", "approved", "rejected", "expired", "cancelled"]);
 export async function runServicesStart(backend, serviceID, options = {}) {
     const host = options.host ?? "terminal";
@@ -622,7 +622,16 @@ export async function runServicesList(backend, options = {}) {
     });
 }
 export async function runServicesReadResult(backend, serviceExecutionID, options = {}) {
-    const envelope = grantedResultEnvelope(await backend.getGrantedServiceResult(serviceExecutionID));
+    const response = await backend.getGrantedServiceResult(serviceExecutionID);
+    let orderID;
+    try {
+        const model = await backend.getServiceExecution(serviceExecutionID);
+        orderID = (model.current_delivery ?? model.delivery_bindings.at(-1))?.order_id;
+    }
+    catch {
+        // Feedback context is optional and must never block an authorized result.
+    }
+    const envelope = grantedResultEnvelope(response, orderID);
     writeCommandEnvelope(envelope, {
         ...(options.jsonOutput !== undefined ? { jsonOutput: options.jsonOutput } : {}),
         ...(options.output ? { output: options.output } : {}),
@@ -669,7 +678,7 @@ function servicesNextEnvelope(model) {
             instruction: execution.status === "refunded"
                 ? "告诉用户这笔服务已经退款并永久结束。Agent 不重放服务步骤、不创建付款页面或尝试读取旧交付。"
                 : paidFailure
-                    ? "告诉用户：付款和订单已经记录，但本次服务没有正常完成，不需要再次付款或重新下单。然后从同一订单检查退款状态；Agent 不重放服务步骤、创建付款页面或再次调用数据来源，也不把技术故障归咎于用户。"
+                    ? appendOptionalFeedbackInvitation("告诉用户：付款和订单已经记录，但本次服务没有正常完成，不需要再次付款或重新下单。然后从同一订单检查退款状态；Agent 不重放服务步骤、创建付款页面或再次调用数据来源，也不把技术故障归咎于用户。", "failed")
                     : "告诉用户本次服务已经结束且没有可继续的交付。Agent 不重放服务步骤或创建付款页面。",
             next: null,
             recovery: [
@@ -730,14 +739,21 @@ function servicesNextEnvelope(model) {
             result: {
                 service_execution_id: execution.service_execution_id,
                 ...(delivery?.capability_id ? { capability_id: delivery.capability_id } : {}),
+                ...(delivery?.order_id ? { order_id: delivery.order_id } : {}),
                 delivery_mode: deliveryMode,
                 items,
             },
-            instruction: items.length > 0
-                ? selection
-                    ? "搜索已完成。用编号、名称和可公开字段向用户说明结果，然后停止。只有用户明确选择候选并要求继续时才执行 next.command；不要提及 safe_payload。"
-                    : "这一步的结果已经可用。用普通语言解释可公开字段并停止；不要提及 Graph、safe_payload 或内部 ID。"
-                : "告诉用户本次查询得到 0 个结果并停止。Agent 不读取其他交付、不重放当前查询、修改输入或创建新查询。",
+            instruction: delivery?.order_id
+                ? appendOptionalFeedbackInvitation(items.length > 0
+                    ? selection
+                        ? "搜索已完成。用编号、名称和可公开字段向用户说明结果，然后停止。只有用户明确选择候选并要求继续时才执行 next.command；不要提及 safe_payload。"
+                        : "这一步的结果已经可用。用普通语言解释可公开字段并停止；不要提及 Graph、safe_payload 或内部 ID。"
+                    : "告诉用户本次查询得到 0 个结果并停止。Agent 不读取其他交付、不重放当前查询、修改输入或创建新查询。", "delivered")
+                : items.length > 0
+                    ? selection
+                        ? "搜索已完成。用编号、名称和可公开字段向用户说明结果，然后停止。只有用户明确选择候选并要求继续时才执行 next.command；不要提及 safe_payload。"
+                        : "这一步的结果已经可用。用普通语言解释可公开字段并停止；不要提及 Graph、safe_payload 或内部 ID。"
+                    : "告诉用户本次查询得到 0 个结果并停止。Agent 不读取其他交付、不重放当前查询、修改输入或创建新查询。",
             next: selection ? {
                 command: `itpay services action ${execution.service_execution_id} --action select_candidate --actor-type human --status approved --candidate <rank> --json`,
                 reason: "仅在用户明确选择后锁定来源候选",
@@ -860,16 +876,19 @@ function serviceDeliveryMode(model) {
 function normalizeGrantStatus(status) {
     return !status || status === "missing" ? "none" : status;
 }
-function grantedResultEnvelope(response) {
+function grantedResultEnvelope(response, orderID) {
     return {
         status: "granted_result_ready",
         result: {
             service_execution_id: response.service_execution_id,
+            ...(orderID ? { order_id: orderID } : {}),
             ...(response.expires_at ? { grant_expires_at: response.expires_at } : {}),
             granted_fields: Object.keys(response.result),
             payload: response.result,
         },
-        instruction: "结果来自当前有效 Vault Grant；只使用本次授权字段，过期后停止读取并重新请求用户同意。",
+        instruction: orderID
+            ? appendOptionalFeedbackInvitation("结果来自当前有效 Vault Grant；只使用本次授权字段，过期后停止读取并重新请求用户同意。", "delivered")
+            : "结果来自当前有效 Vault Grant；只使用本次授权字段，过期后停止读取并重新请求用户同意。",
         next: null,
         recovery: [],
     };
