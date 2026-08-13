@@ -58,6 +58,9 @@ export class BackendClient {
     getOrderDeliveryAccess(orderID) {
         return this.http.get(`/v1/orders/${encodeURIComponent(orderID)}/delivery-access`);
     }
+    submitServiceFeedback(orderID, input) {
+        return this.http.post(`/v1/orders/${encodeURIComponent(orderID)}/feedback`, input);
+    }
     listAccountOrders(limit, status, bearer, cursor) {
         const qs = new URLSearchParams({ limit: String(limit) });
         if (status) {
