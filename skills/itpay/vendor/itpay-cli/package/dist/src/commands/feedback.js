@@ -9,8 +9,8 @@ export async function runFeedbackSubmit(backend, orderID, options) {
     const rating = normalizeFeedbackRating(options.rating);
     const itemRank = normalizeItemRank(options.itemRank);
     const userNote = normalizeUserNote(options.note ?? "");
-    const order = await backend.getOrder(normalizedOrderID);
-    const choices = feedbackItemChoices(order);
+    const context = await backend.getServiceFeedbackOptions(normalizedOrderID);
+    const choices = feedbackItemChoices(context);
     if (choices.length === 0) {
         throw new CommandContractError("feedback_unavailable", "this order has no service item available for feedback", "告诉用户这笔订单当前没有可评价的服务项目并停止；不要猜测项目 ID、切换身份或创建其他反馈。", []);
     }
@@ -18,10 +18,10 @@ export async function runFeedbackSubmit(backend, orderID, options) {
         writeCommandEnvelope({
             status: "feedback_item_selection_required",
             result: {
-                ...(order.order_code ? { order_code: order.order_code } : {}),
+                ...(context.order_code ? { order_code: context.order_code } : {}),
                 items: choices.map(({ rank, title, subject }) => ({ rank, title, ...(subject ? { subject } : {}) })),
             },
-            instruction: "用服务名称和主题让用户选择要评价哪一项；不要展示内部 ID。用户选择后，Agent 使用同一订单、评分和留言并加入所选 item rank 自己执行提交。",
+            instruction: "用服务名称和主题让用户选择要复盘哪一项；不要展示内部 ID。用户选择后，Agent 使用同一订单、已有评分或留言（如有）并加入所选 item rank 自己执行提交。",
             next: null,
             recovery: [],
         }, outputOptions(options));
@@ -33,9 +33,23 @@ export async function runFeedbackSubmit(backend, orderID, options) {
     if (!choice) {
         throw new CommandContractError("feedback_item_invalid", `item rank ${itemRank} is not available for feedback`, "只使用当前订单返回的服务项目编号；不要猜测内部 ID。本次未提交反馈。", []);
     }
+    if (rating === undefined && !userNote && choice.item.agent_feedback_submitted) {
+        writeCommandEnvelope({
+            status: "feedback_already_submitted",
+            result: {
+                ...(context.order_code ? { order_code: context.order_code } : {}),
+                service_title: choice.title,
+            },
+            instruction: "这笔服务的安全复盘已经记录；无需再次提交或打扰用户，停止。用户以后明确补充评分或评论时才更新。",
+            next: null,
+            recovery: [],
+        }, outputOptions(options));
+        return;
+    }
     const note = formatFeedbackNote({
         userNote,
-        outcome: order.status,
+        hasRating: rating !== undefined,
+        outcome: context.status,
         serviceTitle: choice.title,
         environment: options.environment,
         ...(options.agentType ? { agentType: options.agentType } : {}),
@@ -45,24 +59,28 @@ export async function runFeedbackSubmit(backend, orderID, options) {
     }
     const response = await backend.submitServiceFeedback(normalizedOrderID, {
         order_item_id: choice.item.order_item_id,
-        rating,
+        ...(rating !== undefined ? { rating } : {}),
         note,
     });
     writeCommandEnvelope({
         status: "feedback_submitted",
         result: {
-            ...(order.order_code ? { order_code: order.order_code } : {}),
+            ...(context.order_code ? { order_code: context.order_code } : {}),
             service_title: choice.title,
-            rating: response.feedback.rating,
+            ...(response.feedback.rating !== undefined ? { rating: response.feedback.rating } : {}),
             feedback_status: response.feedback.status,
         },
-        instruction: "告诉用户反馈已经记录并表示感谢，然后停止。不要承诺回复、处理时间、退款或结果变更。",
+        instruction: rating !== undefined || userNote
+            ? "告诉用户反馈已经记录并表示感谢，然后停止。不要承诺回复、处理时间、退款或结果变更。"
+            : "服务复盘已经记录；无需打扰用户，停止。不要声称用户给了评分或评论。",
         next: null,
         recovery: [],
     }, outputOptions(options));
 }
 export function normalizeFeedbackRating(value) {
     const normalized = value?.trim().toLowerCase() ?? "";
+    if (!normalized)
+        return undefined;
     const numeric = normalized.match(/^([1-5])(?:\s*(?:\/\s*5|分|星|stars?))?$/u);
     if (numeric)
         return Number(numeric[1]);
@@ -84,11 +102,11 @@ function normalizeItemRank(value) {
     }
     return rank;
 }
-function feedbackItemChoices(order) {
-    return order.items.flatMap((item, index) => {
+function feedbackItemChoices(context) {
+    return context.items.flatMap((item, index) => {
         if (!item.order_item_id?.trim())
             return [];
-        const subject = feedbackSubject(item);
+        const subject = safeLine(item.subject ?? "").slice(0, 160);
         return [{
                 rank: index + 1,
                 item,
@@ -96,17 +114,6 @@ function feedbackItemChoices(order) {
                 ...(subject ? { subject } : {}),
             }];
     });
-}
-function feedbackSubject(item) {
-    for (const field of ["company_name_or_credit_no", "company_name", "company", "target", "keyword"]) {
-        const value = item.input?.[field];
-        if (typeof value === "string") {
-            const safe = safeLine(value);
-            if (safe)
-                return safe.slice(0, 160);
-        }
-    }
-    return undefined;
 }
 function normalizeUserNote(value) {
     return value
@@ -120,13 +127,23 @@ function formatFeedbackNote(input) {
         ? `## Summary\n${input.userNote.split("\n").map((line) => `> ${line}`).join("\n")}\n\n`
         : "";
     return `${summary}## Context\n` + [
-        "- Source: user-confirmed via agent",
+        "- Source: agent-postmortem",
+        `- Human input: ${humanInputSummary(input.hasRating, Boolean(input.userNote))}`,
         `- Outcome: ${safeLine(input.outcome) || "unknown"}`,
         `- Service: ${safeLine(input.serviceTitle) || "未命名服务"}`,
         `- Client: @itpay/cli ${CLI_VERSION}`,
         `- Agent type: ${safeLine(input.agentType ?? "unspecified")}`,
         `- Environment: ${input.environment}`,
     ].join("\n");
+}
+function humanInputSummary(hasRating, hasComment) {
+    if (hasRating && hasComment)
+        return "rating and comment included";
+    if (hasRating)
+        return "rating included";
+    if (hasComment)
+        return "comment included";
+    return "not provided";
 }
 function safeLine(value) {
     return value.replace(/[\r\n\u0000-\u001F\u007F]+/gu, " ").trim();
