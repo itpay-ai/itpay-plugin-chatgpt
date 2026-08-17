@@ -17,7 +17,7 @@ import { localizeCardURL, normalizeCardLocale } from "../render/locale.js";
 import { buildAgentChatHandoff } from "../render/markdown.js";
 import { formatMoney } from "../render/output.js";
 import { CommandContractError, writeCommandEnvelope } from "./guidance.js";
-import { buildCheckoutHandoff, shouldPrepareLocalCheckoutImage } from "./checkout_handoff.js";
+import { buildCheckoutHandoff, isLinkOnlyBrowserAgent, shouldPrepareLocalCheckoutImage } from "./checkout_handoff.js";
 import { qualifyItPayCommand } from "../state/agent_type.js";
 export async function runBuy(backend, config, options) {
     const err = validateContext(options.host, options.target);
@@ -267,7 +267,7 @@ export function buildCheckoutQRPlan(input) {
         host: input.host,
         summary,
         url: input.qrPayload,
-        ...(input.agentType?.trim().toLowerCase() === "workbuddy" && input.cardURL ? { linkOnlyURL: input.cardURL } : {}),
+        ...(isLinkOnlyBrowserAgent(input.agentType, platformKeyForHost(input.host)) && input.cardURL ? { linkOnlyURL: input.cardURL } : {}),
         preferredQRSources: [input.qrPNGURL ?? input.qrPayload],
         checkoutID: input.checkoutID,
         platform,
