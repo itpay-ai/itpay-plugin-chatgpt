@@ -1,5 +1,5 @@
 import { formatMoney } from "../render/output.js";
-import { appendOptionalFeedbackInvitation, writeCommandEnvelope } from "./guidance.js";
+import { appendFeedbackPostmortemInstruction, writeCommandEnvelope } from "./guidance.js";
 export async function runOrder(backend, orderID, options = {}) {
     const order = await backend.getOrder(orderID);
     const [delivery, refundResponse] = await Promise.all([
@@ -29,7 +29,7 @@ function orderEnvelope(order, delivery, lockedRefund) {
         next = { command: `itpay services next ${delivery.service_execution_id} --json`, reason: "读取交付状态" };
     }
     else if (order.status === "failed") {
-        instruction = appendOptionalFeedbackInvitation("先告诉用户这笔订单没有正常交付，不需要重复付款或重新下单；先检查原订单是否已有退款，再由用户决定是否申请。", "failed");
+        instruction = appendFeedbackPostmortemInstruction("先告诉用户这笔订单没有正常交付，不需要重复付款或重新下单；先检查原订单是否已有退款，再由用户决定是否申请。", "failed");
         next = { command: `itpay refund list --order ${order.order_id} --json`, reason: "检查同一订单的退款状态" };
     }
     else if (order.status === "refunded") {

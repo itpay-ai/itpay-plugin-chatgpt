@@ -1,5 +1,5 @@
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomUUID, sign, } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync, } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 const PROTECTED_PATHS = ["/v1/carts", "/v1/service-executions", "/v1/agent-instances", "/v1/orders", "/v1/refunds", "/v1/me", "/v1/vault"];
@@ -292,10 +292,12 @@ async function withFileLock(path, run) {
     catch (error) {
         throw asDeviceStatePathError(error, "prepare_lock") ?? error;
     }
+    const ownerToken = randomUUID();
     let acquired = false;
     for (let attempt = 0; attempt < 200; attempt += 1) {
         try {
-            mkdirSync(path, { mode: 0o700 });
+            writeFileSync(path, ownerToken, { encoding: "utf8", flag: "wx", mode: 0o600 });
+            chmodSync(path, 0o600);
             acquired = true;
             break;
         }
@@ -305,7 +307,7 @@ async function withFileLock(path, run) {
                 throw asDeviceStateError(error, "acquire_lock") ?? error;
             try {
                 if (Date.now() - statSync(path).mtimeMs > 30_000)
-                    removeLock(path, "remove_stale_lock");
+                    moveLockAside(path, "stale", "remove_stale_lock");
             }
             catch (statError) {
                 if (statError.code !== "ENOENT") {
@@ -321,19 +323,33 @@ async function withFileLock(path, run) {
         return await run();
     }
     finally {
-        removeLock(path, "release_lock");
+        releaseLock(path, ownerToken);
     }
 }
-function removeLock(path, operation) {
+function releaseLock(path, ownerToken) {
     try {
-        if (statSync(path).isDirectory())
-            rmdirSync(path);
-        else
-            unlinkSync(path);
+        if (readFileSync(path, "utf8") !== ownerToken)
+            return;
+        moveLockAside(path, "released", "release_lock");
     }
     catch (error) {
         if (error.code !== "ENOENT")
-            throw asDeviceStateError(error, operation) ?? error;
+            throw asDeviceStateError(error, "release_lock") ?? error;
+    }
+}
+function moveLockAside(path, suffix, operation) {
+    try {
+        renameSync(path, `${path}.${suffix}`);
+    }
+    catch (error) {
+        const code = error.code;
+        if (code === "ENOENT")
+            return;
+        if (code === "EEXIST" || code === "ENOTEMPTY") {
+            renameSync(path, `${path}.${suffix}.${randomUUID()}`);
+            return;
+        }
+        throw asDeviceStateError(error, operation) ?? error;
     }
 }
 function asDeviceStateError(error, operation) {
