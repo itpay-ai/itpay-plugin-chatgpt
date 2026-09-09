@@ -1,5 +1,5 @@
 // CLI configuration loader. Production defaults to app.itpay.ai; the only
-// allowed override is the official dev Backend. Checkout
+// allowed override is the official sandbox Backend. Checkout
 // display-token persistence belongs to the cart session file, protected with
 // owner-only permissions. Provider secrets are explicitly out of scope here.
 import { homedir } from "node:os";
@@ -11,9 +11,9 @@ import { declaredAgentType } from "./agent_type.js";
 import { DeviceAuthority } from "./device_authority.js";
 import { OperationJournal } from "./operation_journal.js";
 export const DEFAULT_BASE_URL = "https://app.itpay.ai";
-export const DEV_BASE_URL = "https://dev.itpay.ai";
-export const CLI_VERSION = "2.0.37";
-export const API_CONTRACT_REVISION = "sha256:b97025ee4e6f7539757d6aedbe193dd65b3a0f84f1111f678abb5e757065f888";
+export const SANDBOX_BASE_URL = "https://sandbox.itpay.ai";
+export const CLI_VERSION = "2.0.40";
+export const API_CONTRACT_REVISION = "sha256:6445dc76e23c5b9f0d19cfbfd2a552c0dd96dd0a169f793fe0f6a1c93f3ea1a1";
 const CART_SESSION_DEFAULT_DIR = ".itpay-v3";
 const CART_SESSION_FILENAME = "cart.json";
 const OPERATION_JOURNAL_FILENAME = "operations.json";
@@ -27,7 +27,7 @@ export function cliDistribution(env = process.env) {
 export class BackendOverrideError extends Error {
     code = "backend_override_forbidden";
     constructor() {
-        super(`ITPAY_BACKEND_URL only supports ${DEFAULT_BASE_URL} or ${DEV_BASE_URL}`);
+        super(`ITPAY_BACKEND_URL only supports ${DEFAULT_BASE_URL} or ${SANDBOX_BASE_URL}`);
         this.name = "BackendOverrideError";
     }
 }
@@ -35,23 +35,23 @@ export function resolveBackendURL(env = process.env) {
     const requested = env.ITPAY_BACKEND_URL?.trim();
     if (!requested || requested === DEFAULT_BASE_URL || requested === `${DEFAULT_BASE_URL}/`)
         return DEFAULT_BASE_URL;
-    if (requested === DEV_BASE_URL || requested === `${DEV_BASE_URL}/`)
-        return DEV_BASE_URL;
+    if (requested === SANDBOX_BASE_URL || requested === `${SANDBOX_BASE_URL}/`)
+        return SANDBOX_BASE_URL;
     throw new BackendOverrideError();
 }
 export function qualifyBackendCommand(command, env = process.env) {
     const requested = env.ITPAY_BACKEND_URL?.trim();
-    if (requested !== DEV_BASE_URL && requested !== `${DEV_BASE_URL}/`)
+    if (requested !== SANDBOX_BASE_URL && requested !== `${SANDBOX_BASE_URL}/`)
         return command;
-    if (!command.startsWith("itpay ") || command.startsWith(`ITPAY_BACKEND_URL=${DEV_BASE_URL} `))
+    if (!command.startsWith("itpay ") || command.startsWith(`ITPAY_BACKEND_URL=${SANDBOX_BASE_URL} `))
         return command;
-    return `ITPAY_BACKEND_URL=${DEV_BASE_URL} ${command}`;
+    return `ITPAY_BACKEND_URL=${SANDBOX_BASE_URL} ${command}`;
 }
 function stateFilename(filename, baseURL) {
-    if (baseURL !== DEV_BASE_URL)
+    if (baseURL !== SANDBOX_BASE_URL)
         return filename;
     const dot = filename.lastIndexOf(".");
-    return dot < 0 ? `${filename}.dev` : `${filename.slice(0, dot)}.dev${filename.slice(dot)}`;
+    return dot < 0 ? `${filename}.sandbox` : `${filename.slice(0, dot)}.sandbox${filename.slice(dot)}`;
 }
 function stateDir(env) {
     return resolve(env.HOME || homedir(), CART_SESSION_DEFAULT_DIR);
@@ -74,7 +74,7 @@ export function loadConfig(env = process.env) {
     const ideImageDirOverride = env.ITPAY_IDE_IMAGE_DIR_OVERRIDE;
     return {
         baseURL,
-        environment: baseURL === DEV_BASE_URL ? "development" : "production",
+        environment: baseURL === SANDBOX_BASE_URL ? "development" : "production",
         ...(agentType ? { agentType } : {}),
         checkoutCurrency,
         idempotencyKey,

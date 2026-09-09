@@ -108,6 +108,9 @@ export class BackendClient {
     startServiceExecution(input) {
         return this.http.post("/v1/service-executions", input);
     }
+    advanceServiceExecution(id, input, idempotencyKey) {
+        return this.http.post(`/v1/service-executions/${encodeURIComponent(id)}/advance`, { input, idempotency_key: idempotencyKey });
+    }
     invokeServiceCapability(serviceExecutionID, capabilityID, input) {
         return this.http.post(`/v1/service-executions/${encodeURIComponent(serviceExecutionID)}/capabilities/${encodeURIComponent(capabilityID)}/invoke`, input, { replaySafe: Boolean(input.idempotency_key) });
     }

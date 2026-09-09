@@ -25,7 +25,7 @@ Official Agent install prompt（可直接复制给 Agent）：
 Use a separate test prompt to set the exact official Dev Backend. Never put a
 Dev override in the public install prompt.
 
-The CLI defaults to the production Backend `https://app.itpay.ai`. Explicit tests may set `ITPAY_BACKEND_URL=https://dev.itpay.ai`; every other Backend URL is rejected before network or local state access.
+The CLI defaults to the production Backend `https://app.itpay.ai`. Explicit sandbox runs may set `ITPAY_BACKEND_URL=https://sandbox.itpay.ai`; every other Backend URL is rejected before network or local state access.
 
 ## Output Contract
 
@@ -54,6 +54,7 @@ Normative per-command contracts: [CLI Command Reference](docs/cli-reference/inde
 | `claude-code-cli` | `terminal` |
 | `workbuddy` | `plain-chat` |
 | `zcode` | `plain-chat` |
+| `doubao-work` | `plain-chat` |
 | `kimi-code` | `terminal` |
 | `openclaw` | 必须显式提供 |
 
@@ -90,12 +91,12 @@ itpay --agent-type <agent_type> services checkout <service_execution_id> --resum
 itpay checkout --id <checkout_id> --token <display_token> --json
 ```
 
-The local `~/.itpay-v3` directory stores one owner-only signing key, Backend-scoped Device registrations and Agent instances, idempotency operations, and recovery handles. Production uses `cart.json` / `operations.json`; dev uses `cart.dev.json` / `operations.dev.json`. Backend state remains authoritative. Do not delete or rotate this identity to recover quota.
+The local `~/.itpay-v3` directory stores one owner-only signing key, Backend-scoped Device registrations and Agent instances, idempotency operations, and recovery handles. Production uses `cart.json` / `operations.json`; sandbox uses `cart.sandbox.json` / `operations.sandbox.json`. Backend state remains authoritative. Do not delete or rotate this identity to recover quota.
 
 ## Environment
 
 - `ITPAY_AGENT_TYPE`: stable alternative to global `--agent-type`.
-- `ITPAY_BACKEND_URL`: optional test override; only the exact official URL `https://dev.itpay.ai` is accepted. Unset it for production.
+- `ITPAY_BACKEND_URL`: optional sandbox override; only the exact official URL `https://sandbox.itpay.ai` is accepted. Unset it for production.
 - `ITPAY_BEARER_TOKEN`: optional account-scoped browser session for legacy account reads. Local Agents normally use signed Device Authority plus the time-limited human authorization returned by `vault access`.
 - `ITPAY_CART_SESSION_PATH`: local recovery-state path override.
 - `ITPAY_CURRENCY`: ordinary Cart currency, default `CNY`.
@@ -127,3 +128,9 @@ Source boundaries:
 - `src/state`: local Device Authority, idempotency journal, and recovery handles.
 - `docs/cli-reference`: normative command contracts.
 - `docs/agent/buyer`: packaged progressive workflow guidance.
+
+### Run a published service
+
+Use `itpay services run <service_id> --input-json ./input.json --json` for a published workflow. The input file must contain a JSON object matching the service input schema. With no input file, the CLI reports required fields and a command to continue the same execution.
+
+Use `itpay services run <service_id> --execution <execution_id> --json` to resume. At payment, the CLI uses the existing Checkout QR/card handoff. The backend continues after verified payment even if the CLI exits. `--timeout <seconds>` controls initial status polling (default 120, maximum 600). Use existing order/refund commands for refund requests; an application is not a successful refund until its final status confirms success.

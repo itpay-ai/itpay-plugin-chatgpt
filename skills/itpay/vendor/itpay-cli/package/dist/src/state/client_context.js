@@ -64,6 +64,8 @@ export function defaultHostForAgentType(agentType) {
         return "plain-chat";
     if (normalized === "zcode")
         return "plain-chat";
+    if (normalized === "doubao-work")
+        return "plain-chat";
     if (normalized === "openclaw")
         return undefined;
     return "terminal";
