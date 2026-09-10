@@ -1,7 +1,9 @@
-// CLI configuration loader. Production defaults to app.itpay.ai; the only
-// allowed override is the official dev Backend. Checkout
+import { sellerSessionToken } from "./account_auth.js";
+// CLI configuration loader. Production defaults to app.itpay.ai; supported public overrides
+// are the official sandbox and dev Backends. Checkout
 // display-token persistence belongs to the cart session file, protected with
 // owner-only permissions. Provider secrets are explicitly out of scope here.
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -12,8 +14,9 @@ import { DeviceAuthority } from "./device_authority.js";
 import { OperationJournal } from "./operation_journal.js";
 export const DEFAULT_BASE_URL = "https://app.itpay.ai";
 export const DEV_BASE_URL = "https://dev.itpay.ai";
-export const CLI_VERSION = "2.0.37";
-export const API_CONTRACT_REVISION = "sha256:b97025ee4e6f7539757d6aedbe193dd65b3a0f84f1111f678abb5e757065f888";
+export const SANDBOX_BASE_URL = "https://sandbox.itpay.ai";
+export const CLI_VERSION = "2.1.1";
+export const API_CONTRACT_REVISION = "sha256:b8593e4d73782a3ddeb5d070df1db572e422dd0aa08083372bc8971b5412b643";
 const CART_SESSION_DEFAULT_DIR = ".itpay-v3";
 const CART_SESSION_FILENAME = "cart.json";
 const OPERATION_JOURNAL_FILENAME = "operations.json";
@@ -27,7 +30,7 @@ export function cliDistribution(env = process.env) {
 export class BackendOverrideError extends Error {
     code = "backend_override_forbidden";
     constructor() {
-        super(`ITPAY_BACKEND_URL only supports ${DEFAULT_BASE_URL} or ${DEV_BASE_URL}`);
+        super(`ITPAY_BACKEND_URL only supports ${DEFAULT_BASE_URL}, ${SANDBOX_BASE_URL}, or ${DEV_BASE_URL}`);
         this.name = "BackendOverrideError";
     }
 }
@@ -35,23 +38,31 @@ export function resolveBackendURL(env = process.env) {
     const requested = env.ITPAY_BACKEND_URL?.trim();
     if (!requested || requested === DEFAULT_BASE_URL || requested === `${DEFAULT_BASE_URL}/`)
         return DEFAULT_BASE_URL;
+    if (requested === SANDBOX_BASE_URL || requested === `${SANDBOX_BASE_URL}/`)
+        return SANDBOX_BASE_URL;
     if (requested === DEV_BASE_URL || requested === `${DEV_BASE_URL}/`)
         return DEV_BASE_URL;
+    if (env.ITPAY_CLI_DEV === "1" && /^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/.test(requested))
+        return requested.replace(/\/$/, "");
     throw new BackendOverrideError();
 }
 export function qualifyBackendCommand(command, env = process.env) {
     const requested = env.ITPAY_BACKEND_URL?.trim();
-    if (requested !== DEV_BASE_URL && requested !== `${DEV_BASE_URL}/`)
+    if (!requested)
         return command;
-    if (!command.startsWith("itpay ") || command.startsWith(`ITPAY_BACKEND_URL=${DEV_BASE_URL} `))
+    const target = resolveBackendURL(env);
+    if (target === DEFAULT_BASE_URL)
         return command;
-    return `ITPAY_BACKEND_URL=${DEV_BASE_URL} ${command}`;
+    if (!command.startsWith("itpay ") || command.startsWith(`ITPAY_BACKEND_URL=${target} `))
+        return command;
+    return `ITPAY_BACKEND_URL=${target} ${command}`;
 }
 function stateFilename(filename, baseURL) {
-    if (baseURL !== DEV_BASE_URL)
+    if (baseURL === DEFAULT_BASE_URL)
         return filename;
+    const suffix = baseURL === SANDBOX_BASE_URL ? "sandbox" : baseURL === DEV_BASE_URL ? "dev" : `local-${createHash("sha256").update(baseURL).digest("hex").slice(0, 16)}`;
     const dot = filename.lastIndexOf(".");
-    return dot < 0 ? `${filename}.dev` : `${filename.slice(0, dot)}.dev${filename.slice(dot)}`;
+    return dot < 0 ? `${filename}.${suffix}` : `${filename.slice(0, dot)}.${suffix}${filename.slice(dot)}`;
 }
 function stateDir(env) {
     return resolve(env.HOME || homedir(), CART_SESSION_DEFAULT_DIR);
@@ -74,7 +85,7 @@ export function loadConfig(env = process.env) {
     const ideImageDirOverride = env.ITPAY_IDE_IMAGE_DIR_OVERRIDE;
     return {
         baseURL,
-        environment: baseURL === DEV_BASE_URL ? "development" : "production",
+        environment: baseURL === DEFAULT_BASE_URL ? "production" : "development",
         ...(agentType ? { agentType } : {}),
         checkoutCurrency,
         idempotencyKey,
@@ -104,7 +115,15 @@ export function newBackendClient(config) {
             "X-ItPay-CLI-Version": CLI_VERSION,
             "X-ItPay-Contract-Revision": API_CONTRACT_REVISION,
         },
-        requestAuthorizer: (input) => authority.authorizationHeaders(input),
+        requestAuthorizer: (input) => {
+            if (/^\/v1\/(seller\/organizations(?:\/|\?|$)|library\/)/.test(input.path)) {
+                const token = config.bearerToken ?? sellerSessionToken(config.baseURL);
+                if (!token)
+                    throw new Error("Seller login required; run itpay sell auth login");
+                return Promise.resolve({ Authorization: `Bearer ${token}` });
+            }
+            return authority.authorizationHeaders(input);
+        },
         recoverAuthorization: () => authority.recoverAuthorization(),
     });
     return new BackendClient(http);

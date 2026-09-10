@@ -20,6 +20,13 @@ export async function buildVaultHandoff(input) {
             instruction: "向用户说明这是查看已购内容的只读授权，然后立即用 ZCode 内置浏览器打开 handoff.url。确认已发起打开后停止等待；不要只粘贴文字链接，也不要下载或重建二维码。只有内置浏览器明确不可用时，才展示同一个可点击 handoff.url。用户完成后重新运行最初的读取命令，不要再次创建授权请求。",
         };
     }
+    if (input.agentType?.trim().toLowerCase() === "doubao-work" && platform === "plain_chat") {
+        handoff.qr_image_url = input.qrPNGURL ?? vaultQRURL(input.authorizationURL, input.requestID);
+        return {
+            handoff,
+            instruction: "向用户说明这是查看已购内容的只读授权。在当前豆包工作对话中将 handoff.url 标为“直接打开授权页”，将 handoff.qr_image_url 标为“授权二维码图片（保存或用另一台设备扫码）”，然后停止等待。不要解析 URL credential、下载或重建二维码，也不要重复创建授权请求；用户完成后重新运行最初的读取命令。",
+        };
+    }
     if (platform === "markdown") {
         const downloaded = input.imageAttachEnabled && input.qrPNGURL
             ? await downloadBrandQRToTmp(input.qrPNGURL, "auth", input.requestID, {
@@ -52,6 +59,17 @@ export async function buildVaultHandoff(input) {
             : "向用户说明这是查看已购内容的只读授权，把 handoff.url 和可用的 handoff.qr_image_url 实际发送到当前会话，然后停止。用户完成后重新运行最初的读取命令。",
         ...(platform === "terminal" ? { terminalQR: await renderTerminalQR(input.authorizationURL, input.qrFormat ?? "unicode") } : {}),
     };
+}
+function vaultQRURL(authorizationURL, requestID) {
+    const url = new URL(authorizationURL);
+    const startToken = url.searchParams.get("start_token");
+    if (!startToken)
+        throw new Error("Backend did not return a usable Vault authorization QR URL");
+    url.pathname = `/v1/vault/access-requests/${encodeURIComponent(requestID)}/qr.png`;
+    url.search = "";
+    url.searchParams.set("start_token", startToken);
+    url.hash = "";
+    return url.toString();
 }
 function authorizationMarkdown(url, localPath) {
     const lines = ["### ItPay 已购内容授权"];

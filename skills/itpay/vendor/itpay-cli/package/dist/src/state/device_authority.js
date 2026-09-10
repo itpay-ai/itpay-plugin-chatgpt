@@ -2,7 +2,7 @@ import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, ran
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
-const PROTECTED_PATHS = ["/v1/carts", "/v1/service-executions", "/v1/agent-instances", "/v1/orders", "/v1/refunds", "/v1/me", "/v1/vault"];
+const PROTECTED_PATHS = ["/v1/agent-device-account-bindings", "/v1/carts", "/v1/service-executions", "/v1/agent-instances", "/v1/orders", "/v1/refunds", "/v1/me", "/v1/vault"];
 export class DeviceAuthority {
     baseURL;
     backendKey;

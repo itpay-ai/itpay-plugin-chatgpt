@@ -1,3 +1,7 @@
+import { agentAuth } from "./state/account_auth.js";
+import { registerSell } from "./sell/commands.js";
+import { readFileSync as readWorkflowInputFile } from "node:fs";
+import { runServicesRun } from "./commands/services.js";
 // V3 CLI entrypoint. Each command maps 1:1 to a route family in
 // services/backend/internal/httpapi/handlers/*.go. Commands only
 // orchestrate; HTTP and rendering live in src/client and src/render.
@@ -202,7 +206,7 @@ function reportCLIError(error, contract) {
                                                     ? "临时网络故障；CLI 已仅对可安全重放的操作完成有限自动重试，但仍未获得完整响应。按 recovery 查询同一资源的权威状态；不要创建替代 Checkout、Execution、Payment 或 Refund。"
                                                     : "网络在完整响应前中断；当前写操作没有安全重放合同，因此 CLI 未自动重试。按 recovery 查询权威状态；不要原样重放或创建替代 Checkout、Execution、Payment 或 Refund。"
                                                 : backendOverrideError
-                                                    ? "移除 ITPAY_BACKEND_URL 使用正式环境，或准确设置为 https://dev.itpay.ai。"
+                                                    ? "移除 ITPAY_BACKEND_URL 使用正式环境，或准确设置为 https://sandbox.itpay.ai。"
                                                     : commandError?.instruction ?? authorizationInstruction ?? contract?.instruction ?? "检查命令参数后重试。",
             next: null,
             recovery: incompatible
@@ -288,6 +292,19 @@ program
         });
     }
 });
+const authCmd = program.command("auth").description("Log in and bind this enrolled Agent to your ItPay account");
+for (const action of ["login", "status"]) {
+    authCmd.command(action).option("--json", "output JSON").action(async (options) => {
+        const config = loadConfig();
+        try {
+            const result = await agentAuth(action, config.baseURL, newBackendClient(config));
+            process.stdout.write(JSON.stringify(result) + "\n");
+        }
+        catch (error) {
+            reportCLIError(error, { jsonOutput: Boolean(options.json), code: "account_login_failed", instruction: "完成官方网页登录后重试 itpay auth status；不要清除设备登记。" });
+        }
+    });
+}
 // --- device ---------------------------------------------------------------
 const deviceCmd = program.command("device").description("Recover the current official Backend registration after an operator-confirmed reset");
 deviceCmd
@@ -1216,6 +1233,41 @@ vault
 // --- service execution ----------------------------------------------------
 const services = program.command("services").description("Generic V3 Service Execution commands");
 services
+    .command("run")
+    .description("Run a published service and present Checkout when payment is required")
+    .argument("<service_id>")
+    .option("--input-json <file>", "JSON object containing the service input")
+    .option("--execution <execution_id>", "resume the same execution")
+    .option("--timeout <seconds>", "maximum wait before returning current progress", Number, 120)
+    .option("--host <host>")
+    .option("--target <target>")
+    .option("--json", "output JSON")
+    .action(async (serviceID, options) => {
+    const config = loadConfig();
+    try {
+        const input = options.inputJson ? JSON.parse(readWorkflowInputFile(options.inputJson, "utf8")) : undefined;
+        if (input !== undefined && (!input || typeof input !== "object" || Array.isArray(input))) {
+            throw new Error("input JSON must be an object");
+        }
+        if (!Number.isFinite(options.timeout) || options.timeout < 0 || options.timeout > 600) {
+            throw new Error("timeout must be between 0 and 600 seconds");
+        }
+        await runServicesRun(newBackendClient(config), config, serviceID, input, {
+            ...(options.execution ? { executionID: options.execution } : {}),
+            jsonOutput: Boolean(options.json),
+            host: withHost(options.host, config.agentType, options.target),
+            ...(options.target ? { target: options.target } : {}),
+            timeoutSeconds: options.timeout,
+        });
+    }
+    catch (error) {
+        reportCLIError(error, {
+            jsonOutput: Boolean(options.json), code: "workflow_run_failed",
+            instruction: "按服务输入声明补齐参数；已有 execution 时继续该执行。", recovery: [],
+        });
+    }
+});
+services
     .command("start")
     .description("Start a contract-backed service execution")
     .argument("<service_id>")
@@ -1496,6 +1548,7 @@ services
         });
     }
 });
+registerSell(program);
 program.parseAsync(process.argv).catch((error) => {
     reportCLIError(error);
 });
