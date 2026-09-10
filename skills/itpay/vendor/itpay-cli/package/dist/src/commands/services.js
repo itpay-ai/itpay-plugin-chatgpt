@@ -1,3 +1,5 @@
+import { HttpError } from "../client/http.js";
+import { HttpTransportError } from "../client/transport.js";
 import { operationID } from "../state/config.js";
 import { validateContext } from "../state/client_context.js";
 import { dispatchRender } from "../render/index.js";
@@ -20,6 +22,10 @@ export async function runServicesStart(backend, serviceID, options = {}) {
             ...(options.clientContext ?? {}),
         },
     });
+    if (response.workflow_entry) {
+        writeCommandEnvelope({ status: "input_required", result: { service_execution_id: response.execution.service_execution_id, service_id: serviceID, input_schema: response.workflow_entry.input_schema }, instruction: "根据服务声明填写输入，然后继续同一服务执行。", next: { command: `itpay services run ${serviceID} --execution ${response.execution.service_execution_id} --input-json <file> --json`, reason: "提交买家输入" }, recovery: [] }, { ...options });
+        return;
+    }
     const capability = response.capabilities.find((item) => item.phase === response.execution.phase && !item.requires_payment);
     const requiredInput = requiredInputFields(capability?.input_schema);
     const command = capability
@@ -385,6 +391,10 @@ export async function runServicesCheckout(backend, config, serviceExecutionID, c
         ...(options.email ? { email: options.email } : {}),
     };
     if (!options.resume && !capabilityID) {
+        const model = await backend.getServiceExecution(serviceExecutionID);
+        capabilityID = model.workflow_entry?.capability_id;
+    }
+    if (!options.resume && !capabilityID) {
         throw new CommandContractError("capability_required", "--capability is required when creating a service checkout", "使用当前 Service Execution 返回的付费 capability；恢复已有 Checkout 时改用 --resume。", [{ command: `itpay services next ${serviceExecutionID} --json`, reason: "读取当前允许的付费 capability" }]);
     }
     if (!options.resume) {
@@ -395,7 +405,7 @@ export async function runServicesCheckout(backend, config, serviceExecutionID, c
         }
         const lockedInput = options.lockedInput ?? {};
         const missingInput = missingRequiredInput(capability.input_schema, lockedInput);
-        if (missingInput.length > 0 && readModel.execution.next_action !== "create_checkout") {
+        if (missingInput.length > 0 && !readModel.workflow_entry && readModel.execution.next_action !== "create_checkout") {
             throw new CommandContractError("capability_input_invalid", `missing required capability input: ${missingInput.join(", ")}`, "补齐付费 capability 的 required_input；本次没有创建 quote、Checkout 或订单。", [{ command: checkoutCommand(serviceExecutionID, capability, lockedInput), reason: "提交完整且会被锁定的服务输入" }]);
         }
         if (capability.delivery_email_required && String(deliveryContact.email ?? "").trim() === "") {
@@ -642,6 +652,43 @@ function servicesNextEnvelope(model) {
     const execution = model.execution;
     const currentDelivery = model.current_delivery ?? model.delivery_bindings.at(-1);
     const lockedRefund = model.refunds.find((refund) => refund.access_locked);
+    if (model.workflow_entry && !lockedRefund && !["completed", "delivery"].includes(model.workflow?.status ?? "")) {
+        const id = execution.service_execution_id;
+        const paymentVerified = model.payment_bindings.some((binding) => binding.status === "payment_verified") || model.checkout_bindings.some((binding) => binding.status === "payment_verified");
+        const state = model.workflow?.status === "payment" && paymentVerified ? "running" : model.workflow?.status ?? "input_required";
+        if (state === "failed" && ["login_required", "rate_limited"].includes(model.workflow?.error_code ?? "")) {
+            const login = model.workflow?.error_code === "login_required";
+            return {
+                status: login ? "login_required" : "rate_limited",
+                result: { service_execution_id: id, service_id: execution.service_id },
+                instruction: login ? "匿名免费额度已用完。使用官方网页登录并绑定当前 Agent，完成后重新发起查询；不需要付款。" : "已达到登录账号每分钟查询上限。请等到下一分钟再发起查询，不要连续重试。",
+                next: login ? { command: "itpay auth login --json", reason: "登录继续免费查询" } : null,
+                recovery: [],
+            };
+        }
+        const recovery = state === "recovery_required" || state === "failed";
+        let command = `itpay services next ${id} --json`;
+        if (state === "payment")
+            command = `itpay services checkout ${id} --json`;
+        if (state === "input_required")
+            command = `itpay services run ${execution.service_id} --execution ${id} --input-json <file> --json`;
+        return {
+            status: state,
+            result: {
+                service_execution_id: id,
+                service_id: execution.service_id,
+                workflow: model.workflow,
+                ...(state === "input_required" ? { input_schema: model.workflow_entry.input_schema } : {}),
+            },
+            instruction: recovery
+                ? "执行未完成，请按步骤错误处理；不要重建执行或重复调用。"
+                : state === "payment"
+                    ? "服务已到付款步骤，使用现有 Checkout 完成扫码付款。"
+                    : "继续读取同一执行；缺少输入时按服务声明补齐。",
+            next: recovery ? null : { command, reason: "继续当前流程" },
+            recovery: [],
+        };
+    }
     if (lockedRefund) {
         const terminal = lockedRefund.status === "succeeded";
         return {
@@ -664,7 +711,7 @@ function servicesNextEnvelope(model) {
             recovery: [],
         };
     }
-    if (isTerminalServiceExecutionStatus(execution.status)) {
+    if (isTerminalServiceExecutionStatus(execution.status) && !(model.workflow_entry && (currentDelivery || serviceDeliveryMode(model) === "agent_visible_result") && ["completed", "delivery_completed"].includes(execution.status))) {
         const paid = model.checkout_bindings.some((binding) => binding.status === "payment_verified") || Boolean(currentDelivery?.order_id);
         const paidFailure = execution.status === "failed" && paid;
         return {
@@ -747,12 +794,12 @@ function servicesNextEnvelope(model) {
                 ? appendFeedbackPostmortemInstruction(items.length > 0
                     ? selection
                         ? "搜索已完成。用编号、名称和可公开字段向用户说明结果，然后停止。只有用户明确选择候选并要求继续时才执行 next.command；不要提及 safe_payload。"
-                        : "这一步的结果已经可用。用普通语言解释可公开字段并停止；不要提及 Graph、safe_payload 或内部 ID。"
+                        : "这一步的结果已经可用。用普通语言解释可公开字段并停止；不要提及 Arazzo、safe_payload 或内部 ID。"
                     : "告诉用户本次查询得到 0 个结果并停止。Agent 不读取其他交付、不重放当前查询、修改输入或创建新查询。", "delivered")
                 : items.length > 0
                     ? selection
                         ? "搜索已完成。用编号、名称和可公开字段向用户说明结果，然后停止。只有用户明确选择候选并要求继续时才执行 next.command；不要提及 safe_payload。"
-                        : "这一步的结果已经可用。用普通语言解释可公开字段并停止；不要提及 Graph、safe_payload 或内部 ID。"
+                        : "这一步的结果已经可用。用普通语言解释可公开字段并停止；不要提及 Arazzo、safe_payload 或内部 ID。"
                     : "告诉用户本次查询得到 0 个结果并停止。Agent 不读取其他交付、不重放当前查询、修改输入或创建新查询。",
             next: selection ? {
                 command: `itpay services action ${execution.service_execution_id} --action select_candidate --actor-type human --status approved --candidate <rank> --json`,
@@ -868,6 +915,9 @@ function serviceAllowedActionCommand(model, action) {
 }
 function serviceDeliveryMode(model) {
     const delivery = model.current_delivery ?? model.delivery_bindings.at(-1);
+    const entry = model.capabilities.find(capability => capability.capability_id === model.workflow_entry?.capability_id);
+    if (!delivery && model.workflow?.status === "completed" && entry?.requires_payment === false && !entry.vault_required)
+        return "agent_visible_result";
     const explicit = String(delivery?.redacted_summary?.delivery_mode ?? "");
     if (explicit)
         return explicit;
@@ -1064,5 +1114,61 @@ function tokenizedCheckoutURL(checkoutURL, displayToken, qrPayload) {
     catch {
         const separator = checkoutURL.includes("?") ? "&" : "?";
         return `${checkoutURL}${separator}display_token=${encodeURIComponent(displayToken)}`;
+    }
+}
+export async function runServicesRun(backend, config, serviceID, input, options = {}) {
+    let id = options.executionID;
+    try {
+        if (!id) {
+            const started = await backend.startServiceExecution({
+                service_id: serviceID,
+                client_context: { host: options.host ?? "terminal", ...(options.target ? { target: options.target } : {}) },
+            });
+            id = started.execution.service_execution_id;
+            if (!started.workflow_entry) {
+                await runServicesNext(backend, id, options);
+                return;
+            }
+        }
+        let model = await backend.getServiceExecution(id);
+        if (model.execution.service_id !== serviceID)
+            throw new Error("execution belongs to another service");
+        if (!model.workflow_entry || (input === undefined && !model.workflow)) {
+            await runServicesNext(backend, id, options);
+            return;
+        }
+        if (input !== undefined) {
+            model = await backend.advanceServiceExecution(id, input, `workflow-input:${id}`);
+        }
+        const until = Date.now() + (options.timeoutSeconds ?? 120) * 1000;
+        const sleep = options.sleep ?? ((milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds)));
+        const paid = () => model.payment_bindings.some((binding) => binding.status === "payment_verified") || model.checkout_bindings.some((binding) => binding.status === "payment_verified");
+        while ((["queued", "running", "delivery"].includes(model.workflow?.status ?? "") || (model.workflow?.status === "payment" && paid())) && !model.current_delivery && Date.now() < until) {
+            await sleep(options.pollIntervalMS ?? 1500);
+            model = await backend.getServiceExecution(id);
+        }
+        if (model.refunds.some(refund => refund.access_locked)) {
+            await runServicesNext(backend, id, options);
+            return;
+        }
+        if (model.workflow?.status === "payment" && !paid()) {
+            await runServicesCheckout(backend, config, id, model.workflow_entry?.capability_id, {
+                ...options,
+                ...(config.agentType ? { agentType: config.agentType } : {}),
+                resume: model.checkout_bindings.length > 0,
+            });
+            return;
+        }
+        await runServicesNext(backend, id, options);
+    }
+    catch (cause) {
+        if (cause instanceof CommandContractError || cause instanceof HttpError)
+            throw cause;
+        if (cause instanceof HttpTransportError && !id) {
+            throw new CommandContractError("workflow_start_outcome_unknown", cause.message, "创建服务执行时没有收到完整响应。先查询当前身份可见的执行；不要直接重跑并创建替代执行。", [{ command: "itpay services list --json", reason: "查找可能已经创建的服务执行" }]);
+        }
+        if (cause instanceof HttpTransportError)
+            throw cause;
+        throw new CommandContractError("workflow_run_failed", cause instanceof Error ? cause.message : "workflow run failed", "保留当前执行并按错误处理，不要重复创建服务执行。", [{ command: `itpay services run ${serviceID} --execution ${id} --json`, reason: "恢复同一执行" }]);
     }
 }
