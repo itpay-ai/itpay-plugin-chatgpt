@@ -1,6 +1,6 @@
 # `itpay refund watch`
 
-> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. Under that one product entry point, the two top-level commerce actions are `buy` and `sell`: Buyer workflows are available now; Seller workflows will use the same entry point and are not implemented yet.
+> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. The same entry point supports Buyer workflows and the existing `itpay sell` Seller workflow.
 
 ## 范围与意义
 
@@ -72,4 +72,4 @@ Timeout 只表示本次 CLI 等待结束，不表示退款失败：
 
 ## Agent Type / Host
 
-`codex-desktop`、`codex-cli`、`claude-code-desktop`、`claude-code-cli`、`workbuddy`、`kimi-code`、`openclaw` 七种 Agent Type 返回相同退款事实。Desktop 不会把每次无变化轮询发送到用户对话；Host 不改变 timeout 或退款状态。
+所有正式支持的 Local Agent Type 返回相同退款事实。Desktop 不会把每次无变化轮询发送到用户对话；Host 不改变 timeout 或退款状态。

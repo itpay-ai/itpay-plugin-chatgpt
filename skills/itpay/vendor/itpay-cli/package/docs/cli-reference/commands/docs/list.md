@@ -1,6 +1,6 @@
 # `itpay docs list`
 
-> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. Under that one product entry point, the two top-level commerce actions are `buy` and `sell`: Buyer workflows are available now; Seller workflows will use the same entry point and are not implemented yet.
+> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. The same entry point supports Buyer workflows and the existing `itpay sell` Seller workflow.
 
 ## 范围与意义
 
@@ -50,4 +50,4 @@ itpay docs show <topic> --json
 
 ## Agent Type / Host
 
-七种正式 Agent Type 返回相同结果。本命令没有 Host 渲染、设备登记或本地业务状态写入。
+所有正式 Agent Type 返回相同结果。本命令没有 Host 渲染、设备登记或本地业务状态写入。

@@ -1,6 +1,6 @@
 # `itpay services events`
 
-> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. Under that one product entry point, the two top-level commerce actions are `buy` and `sell`: Buyer workflows are available now; Seller workflows will use the same entry point and are not implemented yet.
+> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. The same entry point supports Buyer workflows and the existing `itpay sell` Seller workflow.
 
 ## 范围与意义
 
@@ -72,4 +72,4 @@ CLI 只投影：`sequence`、`type`、`status`、`phase`、可选 `capability_id
 
 ## Agent Type / Host
 
-七种正式 Agent Type 的事件字段、鉴权和 redaction 完全相同；Host 不影响可见性，也不产生 handoff。
+所有正式 Agent Type 的事件字段、鉴权和 redaction 完全相同；Host 不影响可见性，也不产生 handoff。

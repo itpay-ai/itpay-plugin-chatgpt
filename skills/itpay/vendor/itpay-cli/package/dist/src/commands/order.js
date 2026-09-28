@@ -1,5 +1,5 @@
 import { formatMoney } from "../render/output.js";
-import { writeCommandEnvelope } from "./guidance.js";
+import { appendFeedbackPostmortemInstruction, writeCommandEnvelope } from "./guidance.js";
 export async function runOrder(backend, orderID, options = {}) {
     const order = await backend.getOrder(orderID);
     const [delivery, refundResponse] = await Promise.all([
@@ -29,7 +29,7 @@ function orderEnvelope(order, delivery, lockedRefund) {
         next = { command: `itpay services next ${delivery.service_execution_id} --json`, reason: "读取交付状态" };
     }
     else if (order.status === "failed") {
-        instruction = "先告诉用户这笔订单没有正常交付，不需要重复付款或重新下单；先检查原订单是否已有退款，再由用户决定是否申请。";
+        instruction = appendFeedbackPostmortemInstruction("先告诉用户这笔订单没有正常交付，不需要重复付款或重新下单；先检查原订单是否已有退款，再由用户决定是否申请。", "failed");
         next = { command: `itpay refund list --order ${order.order_id} --json`, reason: "检查同一订单的退款状态" };
     }
     else if (order.status === "refunded") {
@@ -37,6 +37,13 @@ function orderEnvelope(order, delivery, lockedRefund) {
     }
     else if (order.status === "cancelled") {
         instruction = "先告诉用户这笔订单已经取消，没有可继续的付款或交付；不要创建替代订单，除非用户另行提出新的购买。";
+    }
+    else if (order.status === "pending_payment") {
+        const remaining = typeof order.payment_remaining_seconds === "number" && order.payment_remaining_seconds <= 0;
+        instruction = remaining
+            ? "先告诉用户这笔订单的付款时限已到，可能已被取消；如刚完成付款请说明系统正在核对到账，不要重复支付；否则引导用户重新核价下单，刷新不会延长付款期限。"
+            : `先告诉用户订单正在等待付款${order.payment_deadline_at ? `，付款截止时间为 ${order.payment_deadline_at}` : ""}，超时未支付会被自动取消；不要创建替代订单，也不要重复发起支付授权。`;
+        next = { command: `itpay order ${order.order_id} --json`, reason: "刷新订单支付状态" };
     }
     else if (!["delivered", "refunded", "failed", "cancelled"].includes(order.status)) {
         instruction = "先告诉用户订单仍在处理，已记录的付款和订单不需要重复创建；稍后查询同一订单，不要创建替代订单。";
@@ -48,6 +55,11 @@ function orderEnvelope(order, delivery, lockedRefund) {
             order_id: order.order_id,
             ...(order.order_code ? { order_code: order.order_code } : {}),
             amount: formatMoney(order.amount_minor, order.currency),
+            ...(order.payment_deadline_at ? { payment_deadline_at: order.payment_deadline_at } : {}),
+            ...(typeof order.payment_remaining_seconds === "number"
+                ? { payment_remaining_seconds: order.payment_remaining_seconds }
+                : {}),
+            ...(order.server_now ? { server_now: order.server_now } : {}),
             ...(delivery ? { delivery_mode: delivery.delivery_mode } : {}),
             access_locked: Boolean(lockedRefund),
             ...(delivery?.service_execution_id ? { service_execution_id: delivery.service_execution_id } : {}),

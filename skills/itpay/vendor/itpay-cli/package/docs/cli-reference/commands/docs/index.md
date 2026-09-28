@@ -1,6 +1,6 @@
 # `itpay docs`
 
-> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. Under that one product entry point, the two top-level commerce actions are `buy` and `sell`: Buyer workflows are available now; Seller workflows will use the same entry point and are not implemented yet.
+> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. The same entry point supports Buyer workflows and the existing `itpay sell` Seller workflow.
 
 ## 命令范围
 
@@ -27,4 +27,4 @@ itpay docs --help
 
 ## Agent Type / Host
 
-`codex-desktop`、`codex-cli`、`claude-code-desktop`、`claude-code-cli`、`workbuddy`、`kimi-code`、`openclaw` 七种 Agent Type 使用同一文档源；topic 内容可以包含各类型专属 section。
+所有正式支持的 Local Agent Type 使用同一文档源；topic 内容可以包含各类型专属 section。完整类型列表以 `itpay install --json` 和 Agent Type reference 为准。

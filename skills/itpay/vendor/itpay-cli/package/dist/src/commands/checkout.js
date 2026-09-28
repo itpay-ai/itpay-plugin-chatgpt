@@ -5,11 +5,40 @@ import { buildAgentChatHandoff } from "../render/markdown.js";
 import { platformKeyForHost } from "../render/plan.js";
 import { renderTerminalQR } from "../render/qr.js";
 import { localizeCardURL, normalizeCardLocale } from "../render/locale.js";
+import { openInSystemBrowser } from "../render/browser.js";
+import { hostCapabilities, normalizeViewer } from "../state/client_context.js";
 import { DEFAULT_BASE_URL } from "../state/config.js";
 import { buildCheckoutQRPlan } from "./buy.js";
 import { buildCheckoutHandoff, shouldPrepareLocalCheckoutImage } from "./checkout_handoff.js";
-import { writeCommandEnvelope } from "./guidance.js";
+import { CommandContractError, writeCommandEnvelope } from "./guidance.js";
+import { resolvePresentation, resolveRelay } from "./presentation.js";
 export async function runCheckoutPresentation(backend, options) {
+    const present = options.present;
+    if (present !== undefined && !["auto", "browser", "image", "link", "none"].includes(present)) {
+        throw new CommandContractError("present_invalid", `--present must be one of auto|browser|image|link|none`, "使用支持的展示方式；未知参数已被拒绝。", []);
+    }
+    const relayRequested = Boolean(options.relayOption || options.confirmRelay || options.requestKey || options.relayStatus);
+    if (relayRequested && options.present && options.present !== "none") {
+        throw new CommandContractError("present_relay_conflict", "--present and --relay-* options are mutually exclusive", "展示和消息转发二选一；不要在同一次调用中同时开页面和发消息。", []);
+    }
+    if (options.noOpen && options.present === "browser") {
+        throw new CommandContractError("present_conflict", "--present browser conflicts with --no-open", "--no-open 与浏览器展示冲突；改用 --present link 或 image。", []);
+    }
+    if (options.relayStatus) {
+        // Read-only relay status. The backend exposes no relay routes yet, so the
+        // honest answer is unavailable — never a resend, never a guessed state.
+        writeCommandEnvelope({
+            status: "relay_unavailable",
+            result: { relay_id: options.relayStatus },
+            instruction: "当前 Backend 未提供消息转发状态查询；不要重发。读取原订单/Checkout 状态核对。",
+            next: { command: `itpay checkout --id ${options.checkoutID} --token ${options.displayToken} --json`, reason: "读取原 Checkout 当前状态" },
+            recovery: [],
+        }, {
+            ...(options.jsonOutput !== undefined ? { jsonOutput: options.jsonOutput } : {}),
+            ...(options.output ? { output: options.output } : {}),
+        });
+        return;
+    }
     const locale = normalizeCardLocale(options.locale);
     const presentation = await backend.getCheckoutPresentation(options.checkoutID, options.displayToken, locale === "en" ? locale : undefined);
     const host = options.host ?? "terminal";
@@ -22,7 +51,7 @@ export async function runCheckoutPresentation(backend, options) {
         });
         return;
     }
-    const checkoutURL = checkoutPageURL(options.baseURL, options.checkoutID, options.displayToken);
+    const checkoutURL = savedCheckoutURLOrFallback(options.savedCheckoutURL, options.checkoutID, options.displayToken, checkoutPageURL(options.baseURL, options.checkoutID, options.displayToken));
     const cardURL = localizeCardURL(absolutePublicURL(options.baseURL, presentation.card_url ?? checkoutCardURL(options.baseURL, options.checkoutID, options.displayToken)), locale);
     const qrPNGURL = absolutePublicURL(options.baseURL, presentation.card_png_url ?? presentation.qr_png_url ?? checkoutCardPNGURL(options.baseURL, options.checkoutID, options.displayToken));
     const localizedPNGURL = localizeCardURL(qrPNGURL, locale);
@@ -56,11 +85,77 @@ export async function runCheckoutPresentation(backend, options) {
     if (!options.jsonOutput && platformKeyForHost(host) === "terminal") {
         plainResult.push("qr:", await renderTerminalQR(checkoutURL, "terminal"));
     }
+    // W5: deterministic presentation plan — business state first, then declared
+    // capabilities. `present` is the explicit display request; without it (or
+    // under --json alone) nothing opens.
+    // An explicit --viewer (including "unknown") wins over the host default.
+    const viewer = options.viewer ? normalizeViewer(options.viewer) : (host === "terminal" ? "desktop" : "unknown");
+    const locality = ["terminal", "codex", "claude-code"].includes(host) ? "same_device" : "unknown";
+    const decision = resolvePresentation({
+        business: {
+            commerce_policy: "allowed",
+            payment_state: "unpaid",
+            quote_valid: presentation.rail_quote?.expires_at
+                ? Date.parse(presentation.rail_quote.expires_at) > Date.now()
+                : true,
+            amount_minor: presentation.checkout.amount_minor,
+        },
+        viewer,
+        executor_locality: locality,
+        capabilities: hostCapabilities(host),
+        ...(explicitChoiceFor(options.present) ? { explicit_choice: explicitChoiceFor(options.present) } : {}),
+    });
+    const presentationResult = {
+        recommended: decision.recommended,
+        alternatives: decision.alternatives,
+        ...(decision.blocker ? { blocker: decision.blocker } : {}),
+    };
+    let dispatch = { status: "not_attempted" };
+    // Explicit --present browser may open even under --json (the flag IS the
+    // display request); --present auto under --json stays a plan and never opens.
+    const browserRequested = options.present === "browser"
+        || (options.present === "auto" && !options.jsonOutput && !options.noOpen && decision.recommended === "open_system_browser");
+    if (browserRequested && !options.noOpen && process.env.ITPAY_NO_BROWSER !== "1") {
+        const target = decision.recommended === "open_embedded_browser" ? decision.recommended : "open_system_browser";
+        dispatch = await openInSystemBrowser(checkoutURL, options.baseURL);
+        presentationResult.dispatched = { route: target, observation: dispatch.status };
+        // Dispatch proves the request was accepted — nothing about visibility.
+        if (dispatch.status === "dispatch_accepted") {
+            envelope.instruction += " 已发起在本机浏览器打开官方确认页；只有用户确认看到页面才视为已显示，没看到时改发链接。";
+        }
+        else {
+            envelope.instruction += " 浏览器打开未成功；按 handoff 链接展示，不要重复尝试同一方式。";
+        }
+    }
+    if (relayRequested) {
+        presentationResult.relay = resolveRelay({
+            ...(options.relayOption ? { relayOption: options.relayOption } : {}),
+            ...(options.confirmRelay ? { confirmRelay: options.confirmRelay } : {}),
+            ...(options.requestKey ? { requestKey: options.requestKey } : {}),
+            backendCapability: false,
+        });
+        envelope.instruction += " 消息转发当前不可用；不要声称已发送，改用现有官方入口展示。";
+    }
+    envelope.result = { ...envelope.result, presentation: presentationResult };
+    envelope.communication = {
+        schema_version: "itpay.communication.v1",
+        tell: decision.communication.tell,
+        wait_for: decision.communication.wait_for,
+        must_convey: decision.communication.must_convey,
+    };
     writeCommandEnvelope(envelope, {
         ...(options.jsonOutput !== undefined ? { jsonOutput: options.jsonOutput } : {}),
         ...(options.output ? { output: options.output } : {}),
         plainResult,
     });
+}
+function explicitChoiceFor(present) {
+    switch (present) {
+        case "browser": return "open_system_browser";
+        case "link": return "show_link";
+        case "image": return "show_official_image";
+        default: return undefined;
+    }
 }
 function pendingCheckoutEnvelope(presentation, checkoutURL, plan, nextCommand, agentType, target) {
     const platform = platformKeyForHost(plan.host);
@@ -68,6 +163,7 @@ function pendingCheckoutEnvelope(presentation, checkoutURL, plan, nextCommand, a
     const presentationHandoff = buildCheckoutHandoff({
         platform,
         url: plan.linkOnlyURL ?? checkoutURL,
+        mobileUrl: checkoutURL,
         amount,
         plan,
         ...(agentType ? { agentType } : {}),
@@ -78,17 +174,50 @@ function pendingCheckoutEnvelope(presentation, checkoutURL, plan, nextCommand, a
             : {}),
         ...(platform === "markdown" ? { markdown: buildAgentChatHandoff(plan).markdown } : {}),
     });
+    const railQuote = presentation.rail_quote;
+    const railPassengersPending = presentation.checkout_details === "rail_passengers" && !presentation.rail_passengers_confirmed;
     return {
         status: "human_checkout_required",
         result: {
             checkout_id: presentation.checkout.checkout_id,
             payment: "pending",
             amount,
+            ...(railQuote ? { rail_quote: {
+                    passengers: railQuote.passengers,
+                    expires_at: railQuote.expires_at,
+                    legs: railQuote.legs.map((leg) => ({
+                        train_code: leg.train_code,
+                        travel_date: leg.travel_date,
+                        route: `${leg.from} → ${leg.to}`,
+                        time: `${leg.departure}–${leg.arrival}`,
+                        seat_name: leg.seat_name,
+                        ...(leg.seat_preferences?.length ? { seat_preferences: leg.seat_preferences } : {}),
+                        ...(leg.seat_request_planned ? {
+                            seat_request_planned: leg.seat_request_planned,
+                            auto_reason: leg.auto_reason ?? "none",
+                        } : {}),
+                    })),
+                } } : {}),
+            ...(railPassengersPending ? { rail_passengers_confirmed: false } : {}),
+            ...(presentation.payment_deadline_at ? { payment_deadline_at: presentation.payment_deadline_at } : {}),
+            ...(typeof presentation.payment_remaining_seconds === "number"
+                ? { payment_remaining_seconds: presentation.payment_remaining_seconds }
+                : {}),
+            ...(presentation.server_now ? { server_now: presentation.server_now } : {}),
+            ...(presentation.verified_sms_contact ? { verified_sms_contact: presentation.verified_sms_contact } : {}),
+            ...(presentation.account_phone_option?.masked_recipient
+                ? { account_phone_option: { masked_recipient: presentation.account_phone_option.masked_recipient } }
+                : {}),
         },
         handoff: presentationHandoff.handoff,
-        instruction: presentationHandoff.instruction,
+        instruction: railPassengersPending
+            ? `${presentationHandoff.instruction} 请用户在受保护网页填写乘车人并确认报价；姓名、证件和手机号只在网页填写，不要贴到对话中。座位偏好仅为购票请求、购票时才提交给供应商且不保证满足；无法逐人提交的偏好将自动分配座位，以实际出票为准。`
+            : presentationHandoff.instruction,
         next: { command: nextCommand, reason: "稍后只查询同一 Checkout" },
-        recovery: [],
+        recovery: [{
+                command: nextCommand,
+                reason: "付款时限由服务端统一确定，刷新不会延长；到期未支付自动取消后须重新核价下单，不要重发旧付款动作",
+            }],
     };
 }
 function terminalCheckoutEnvelope(presentation) {
@@ -142,6 +271,20 @@ function formatMoney(amountMinor, currency) {
 function checkoutPageURL(baseURL, checkoutID, displayToken) {
     const root = publicRoot(baseURL);
     return `${root}/checkout/${encodeURIComponent(checkoutID)}?display_token=${encodeURIComponent(displayToken)}`;
+}
+function savedCheckoutURLOrFallback(savedURL, checkoutID, displayToken, fallback) {
+    if (!savedURL) {
+        return fallback;
+    }
+    try {
+        const parsed = new URL(savedURL);
+        const belongsToCheckout = parsed.pathname === `/checkout/${checkoutID}`;
+        const sameToken = parsed.searchParams.get("display_token") === displayToken;
+        return belongsToCheckout && sameToken ? savedURL : fallback;
+    }
+    catch {
+        return fallback;
+    }
 }
 function checkoutCardURL(baseURL, checkoutID, displayToken) {
     const root = publicRoot(baseURL);

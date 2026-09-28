@@ -1,6 +1,6 @@
 # `itpay refund get`
 
-> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. Under that one product entry point, the two top-level commerce actions are `buy` and `sell`: Buyer workflows are available now; Seller workflows will use the same entry point and are not implemented yet.
+> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. The same entry point supports Buyer workflows and the existing `itpay sell` Seller workflow.
 
 ## 范围与意义
 
@@ -64,4 +64,4 @@ CLI 不因为退款终态自行修改订单或 grant。
 
 ## Agent Type / Host
 
-`codex-desktop`、`codex-cli`、`claude-code-desktop`、`claude-code-cli`、`workbuddy`、`kimi-code`、`openclaw` 七种 Agent Type 返回完全相同的退款事实、instruction 和 next。Host 不改变 Refund Owner 状态或访问锁。
+所有正式支持的 Local Agent Type 返回完全相同的退款事实、instruction 和 next。Host 不改变 Refund Owner 状态或访问锁。

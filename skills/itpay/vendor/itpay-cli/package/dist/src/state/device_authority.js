@@ -1,8 +1,8 @@
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomUUID, sign, } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync, } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
-const PROTECTED_PATHS = ["/v1/carts", "/v1/service-executions", "/v1/agent-instances", "/v1/orders", "/v1/refunds", "/v1/me", "/v1/vault"];
+const PROTECTED_PATHS = ["/v1/agent-device-account-bindings", "/v1/carts", "/v1/service-executions", "/v1/agent-instances", "/v1/orders", "/v1/refunds", "/v1/me", "/v1/vault", "/v1/rail/phone-links"];
 export class DeviceAuthority {
     baseURL;
     backendKey;
@@ -43,11 +43,24 @@ export class DeviceAuthority {
     }
     async ensureAuthorization() {
         if (!this.pending) {
-            this.pending = withFileLock(`${this.statePath}.lock`, () => this.prepareAuthorization()).finally(() => {
+            this.pending = this.cachedAuthorization() ?? withFileLock(`${this.statePath}.lock`, () => this.prepareAuthorization());
+            this.pending = this.pending.finally(() => {
                 this.pending = undefined;
             });
         }
         return this.pending;
+    }
+    cachedAuthorization() {
+        const agentType = this.requestedAgentType;
+        if (!agentType)
+            return undefined;
+        const state = this.readState();
+        const registration = state?.registrations[this.backendKey];
+        const session = registration?.sessions[agentType];
+        if (!registration?.agentInstances[agentType] || !session || Date.parse(session.expiresAt) <= Date.now() + 60_000)
+            return undefined;
+        const privateKey = this.readPrivateKey();
+        return privateKey ? Promise.resolve({ state: registration, agentType, session, privateKey }) : undefined;
     }
     async recoverAuthorization() {
         await withFileLock(`${this.statePath}.lock`, async () => {
@@ -61,6 +74,9 @@ export class DeviceAuthority {
             this.writeState(state);
         });
     }
+    repairLock() {
+        return inspectAndRecoverLock(`${this.statePath}.lock`);
+    }
     async recoverBackendReset() {
         return withFileLock(`${this.statePath}.lock`, async () => {
             const state = this.readState();
@@ -73,6 +89,27 @@ export class DeviceAuthority {
             return { removed: true, agentTypes };
         });
     }
+    async resetDeviceKey() {
+        return withFileLock(`${this.statePath}.lock`, async () => {
+            const state = this.readState();
+            const removedBackends = state ? Object.keys(state.registrations).sort() : [];
+            // Delete the key first: if the process dies before the state write, the
+            // next run treats the missing key as a fresh install and completes the
+            // reset itself; it can never pair a new key with stale registrations.
+            if (existsSync(this.privateKeyPath)) {
+                try {
+                    unlinkSync(this.privateKeyPath);
+                }
+                catch (error) {
+                    if (error.code !== "ENOENT") {
+                        throw asDeviceStateError(error, "remove_private_key") ?? error;
+                    }
+                }
+            }
+            this.writeState(emptyDeviceState());
+            return { removedBackends };
+        });
+    }
     async prepareAuthorization() {
         let state = this.readState() ?? emptyDeviceState();
         const agentType = this.requestedAgentType;
@@ -83,8 +120,14 @@ export class DeviceAuthority {
         if (!privateKey) {
             const pair = generateKeyPairSync("ed25519");
             privateKey = pair.privateKey;
-            this.writePrivateKey(pair.privateKey.export({ format: "pem", type: "pkcs8" }).toString());
+            // Persist an empty state before the new key ever reaches disk so a crash
+            // can never pair the new key with registrations bound to the old one.
+            // A crash between the two writes leaves either no key (fresh retry) or a
+            // key with no registrations (the backend re-attaches to the existing
+            // device instead of creating a duplicate).
             state = emptyDeviceState();
+            this.writeState(state);
+            this.writePrivateKey(pair.privateKey.export({ format: "pem", type: "pkcs8" }).toString());
         }
         let registration = state.registrations[this.backendKey];
         if (!registration && state.legacyRegistration) {
@@ -102,7 +145,21 @@ export class DeviceAuthority {
             registration = await this.enroll(agentType, privateKey);
         }
         state.registrations[this.backendKey] = registration;
-        const session = await this.ensureRegistrationAgentType(registration, agentType, privateKey, false);
+        let session;
+        try {
+            session = await this.ensureRegistrationAgentType(registration, agentType, privateKey, false);
+        }
+        catch (error) {
+            if (!isUnknownDeviceRegistration(error))
+                throw error;
+            // The backend lost this registration (e.g. its identity store was
+            // rebuilt). Drop the stale record and enroll once: the same key either
+            // re-attaches to the surviving device or creates a fresh one.
+            delete state.registrations[this.backendKey];
+            registration = await this.enroll(agentType, privateKey);
+            state.registrations[this.backendKey] = registration;
+            session = await this.ensureRegistrationAgentType(registration, agentType, privateKey, false);
+        }
         this.writeState(state);
         return { state: registration, agentType, session, privateKey };
     }
@@ -136,16 +193,23 @@ export class DeviceAuthority {
         if (!publicJWK.x)
             throw new Error("unable to export Ed25519 public key");
         const publicKey = Buffer.from(publicJWK.x, "base64url").toString("base64");
-        const started = await this.publicJSON("/v1/agent-device-enrollments", { public_key: publicKey, agent_type: agentType });
-        const proof = enrollmentProofMessage(started.agent_device_enrollment_id, started.challenge);
-        const verified = await this.publicJSON(`/v1/agent-device-enrollments/${encodeURIComponent(started.agent_device_enrollment_id)}/verify`, { challenge: started.challenge, signature: sign(null, Buffer.from(proof), privateKey).toString("base64") });
-        return {
-            deviceID: verified.agent_device_id,
-            deviceKeyID: verified.agent_device_key_id,
-            quotaLineageID: verified.quota_lineage_id,
-            agentInstances: { [verified.agent_type]: verified.agent_instance_id },
-            sessions: {},
-        };
+        try {
+            const started = await this.publicJSON("/v1/agent-device-enrollments", { public_key: publicKey, agent_type: agentType });
+            const proof = enrollmentProofMessage(started.agent_device_enrollment_id, started.challenge);
+            const verified = await this.publicJSON(`/v1/agent-device-enrollments/${encodeURIComponent(started.agent_device_enrollment_id)}/verify`, { challenge: started.challenge, signature: sign(null, Buffer.from(proof), privateKey).toString("base64") });
+            return {
+                deviceID: verified.agent_device_id,
+                deviceKeyID: verified.agent_device_key_id,
+                quotaLineageID: verified.quota_lineage_id,
+                agentInstances: { [verified.agent_type]: verified.agent_instance_id },
+                sessions: {},
+            };
+        }
+        catch (error) {
+            if (error instanceof DeviceAuthorizationError)
+                error.enrollmentFailed = true;
+            throw error;
+        }
     }
     async ensureSession(state, agentType, privateKey, force = false) {
         const existing = state.sessions[agentType];
@@ -188,6 +252,7 @@ export class DeviceAuthority {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json", ...this.compatibilityHeaders, ...extraHeaders },
             body,
+            signal: AbortSignal.timeout(15_000),
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok)
@@ -233,6 +298,7 @@ export class DeviceAuthority {
 export class DeviceAuthorizationError extends Error {
     status;
     code;
+    enrollmentFailed = false;
     constructor(status, code, message) {
         super(message);
         this.status = status;
@@ -251,11 +317,21 @@ export class DeviceStateError extends Error {
         this.name = "DeviceStateError";
     }
 }
+export class DeviceLockBusyError extends Error {
+    code = "device_lock_busy";
+    constructor() {
+        super("ItPay device identity is being updated by another process");
+        this.name = "DeviceLockBusyError";
+    }
+}
 function emptyDeviceState() {
     return { schemaVersion: "itpay.device.v2", registrations: {} };
 }
 function canMovePastLegacyRegistration(error) {
     return error instanceof DeviceAuthorizationError && (error.code === "agent_device_revoked" || error.status === 404);
+}
+function isUnknownDeviceRegistration(error) {
+    return error instanceof DeviceAuthorizationError && (error.code === "agent_device_not_found" || error.status === 404);
 }
 function normalizeBackendKey(value) {
     const url = new URL(value);
@@ -292,10 +368,12 @@ async function withFileLock(path, run) {
     catch (error) {
         throw asDeviceStatePathError(error, "prepare_lock") ?? error;
     }
+    const ownerToken = `${process.pid}:${randomUUID()}`;
     let acquired = false;
-    for (let attempt = 0; attempt < 200; attempt += 1) {
+    for (let attempt = 0; attempt < 800; attempt += 1) {
         try {
-            mkdirSync(path, { mode: 0o700 });
+            writeFileSync(path, ownerToken, { encoding: "utf8", flag: "wx", mode: 0o600 });
+            chmodSync(path, 0o600);
             acquired = true;
             break;
         }
@@ -303,37 +381,83 @@ async function withFileLock(path, run) {
             const code = error.code;
             if (code !== "EEXIST")
                 throw asDeviceStateError(error, "acquire_lock") ?? error;
-            try {
-                if (Date.now() - statSync(path).mtimeMs > 30_000)
-                    removeLock(path, "remove_stale_lock");
-            }
-            catch (statError) {
-                if (statError.code !== "ENOENT") {
-                    throw asDeviceStateError(statError, "inspect_lock") ?? statError;
-                }
-            }
+            inspectAndRecoverLock(path);
             await new Promise((resolve) => setTimeout(resolve, 25));
         }
     }
     if (!acquired)
-        throw new Error("timed out waiting for ItPay device identity lock");
+        throw new DeviceLockBusyError();
     try {
         return await run();
     }
     finally {
-        removeLock(path, "release_lock");
+        releaseLock(path, ownerToken);
     }
 }
-function removeLock(path, operation) {
+function inspectAndRecoverLock(path) {
+    let token;
+    let age;
     try {
-        if (statSync(path).isDirectory())
-            rmdirSync(path);
-        else
-            unlinkSync(path);
+        const lockStat = statSync(path);
+        age = Date.now() - lockStat.mtimeMs;
+        token = lockStat.isDirectory() ? "" : readFileSync(path, "utf8");
+    }
+    catch (error) {
+        if (error.code === "ENOENT")
+            return "absent";
+        throw asDeviceStateError(error, "inspect_lock") ?? error;
+    }
+    const ownerPID = /^(\d+):[0-9a-f-]+$/.exec(token)?.[1];
+    if (ownerPID) {
+        try {
+            process.kill(Number(ownerPID), 0);
+            return "active";
+        }
+        catch (error) {
+            if (error.code !== "ESRCH")
+                return "active";
+        }
+    }
+    else if (age <= 30_000) {
+        return "active";
+    }
+    // Recheck the exact owner before moving the lock; another process may have renewed it.
+    try {
+        if (token ? readFileSync(path, "utf8") !== token : !statSync(path).isDirectory())
+            return "active";
+    }
+    catch (error) {
+        if (error.code === "ENOENT")
+            return "absent";
+        throw asDeviceStateError(error, "inspect_lock") ?? error;
+    }
+    moveLockAside(path, "stale", "remove_stale_lock");
+    return "recovered";
+}
+function releaseLock(path, ownerToken) {
+    try {
+        if (readFileSync(path, "utf8") !== ownerToken)
+            return;
+        moveLockAside(path, "released", "release_lock");
     }
     catch (error) {
         if (error.code !== "ENOENT")
-            throw asDeviceStateError(error, operation) ?? error;
+            throw asDeviceStateError(error, "release_lock") ?? error;
+    }
+}
+function moveLockAside(path, suffix, operation) {
+    try {
+        renameSync(path, `${path}.${suffix}`);
+    }
+    catch (error) {
+        const code = error.code;
+        if (code === "ENOENT")
+            return;
+        if (code === "EEXIST" || code === "ENOTEMPTY") {
+            renameSync(path, `${path}.${suffix}.${randomUUID()}`);
+            return;
+        }
+        throw asDeviceStateError(error, operation) ?? error;
     }
 }
 function asDeviceStateError(error, operation) {
