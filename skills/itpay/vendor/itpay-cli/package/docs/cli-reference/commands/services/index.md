@@ -1,6 +1,6 @@
 # `itpay services`
 
-> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. Under that one product entry point, the two top-level commerce actions are `buy` and `sell`: Buyer workflows are available now; Seller workflows will use the same entry point and are not implemented yet.
+> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. Seller-published workflows enter the same Buyer execution, Checkout, delivery, and refund state machine as ItPay services.
 
 ## 命令范围
 
@@ -11,7 +11,7 @@
 
 ## 核心不变量
 
-- 一个 Execution 表示一个独立服务意图；多个意图分别执行、分别交付，但各自的 Quote 可以进入同一 Cart。
+- Execution 的边界由服务合同决定；铁路查询和购票使用不同 Execution，已有执行的等待与恢复保持原 ID。其他独立服务分别执行，其 Quote 可进入同一 Cart。
 - 任何 capability 输入都必须在状态写入、锁价、订单创建和 Provider 调用前通过 schema 校验。
 - `invoke` 只运行当前阶段允许且不需付款的 Agent-visible capability。
 - 依赖候选的付费 capability 必须继续来源 Execution；`action --candidate` 不能跨 Execution 搬运候选。
@@ -22,6 +22,7 @@
 ## 子命令
 
 - [`start`](start.md)
+- [`run`](run.md)
 - [`invoke`](invoke.md)
 - [`action`](action.md)
 - [`quote`](quote.md)
@@ -40,7 +41,7 @@
 itpay services --help
 ```
 
-输出十个子命令及一句选择规则：正常推进使用 `next`，深度诊断才使用 `get/events`。未知子命令返回参数错误和本 help，不创建 Execution。
+输出十一个子命令及一句选择规则：运行已发布服务使用 `run`，正常推进使用 `next`，深度诊断才使用 `get/events`。未知子命令返回参数错误和本 help，不创建 Execution。
 
 ## Agent Type / Host
 

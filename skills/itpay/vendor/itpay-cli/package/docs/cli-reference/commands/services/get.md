@@ -1,6 +1,6 @@
 # `itpay services get`
 
-> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. Under that one product entry point, the two top-level commerce actions are `buy` and `sell`: Buyer workflows are available now; Seller workflows will use the same entry point and are not implemented yet.
+> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. The same entry point supports Buyer workflows and the existing `itpay sell` Seller workflow.
 
 ## 范围与意义
 
@@ -57,9 +57,11 @@ itpay services get <service_execution_id> [--json]
 
 `timeline` 只保留最近 20 个公开节点；超过时增加 `timeline_truncated: true`。它不返回 event ID 或 `redacted_summary`。交付存在时可增加 `delivery_mode`；退款锁存在时增加 `access_locked` 和退款 ID/status，并优先返回锁定 instruction。
 
+订票类 Execution 的 `workflow:confirm_booking` 待确认/待修订状态不在 timeline 中展开细节——行程、`seat_options` 与当前 `draft_revision` 一律通过 `services next` 的 `booking_review_required` 投影读取；`get` 只用于确认执行仍处于可继续状态。
+
 ## 异常处理
 
-默认不返回原始 events、Provider metadata、内部 bindings、graph projection、capability schema、candidate hash、client context 或完整 payload。需要完整但仍经服务端脱敏的事件时才运行 `services events`。
+默认不返回原始 events、Provider metadata、内部 bindings、Arazzo workflow、capability schema、candidate hash、client context 或完整 payload。需要完整但仍经服务端脱敏的事件时才运行 `services events`。
 
 execution 不存在或不属于当前身份时保留不透明 `not_found`，只恢复到 `itpay services list --json`；不得通过错误差异探测其他账号。
 

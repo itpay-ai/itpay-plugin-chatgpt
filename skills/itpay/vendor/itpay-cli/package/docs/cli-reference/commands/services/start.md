@@ -1,6 +1,6 @@
 # `itpay services start`
 
-> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. Under that one product entry point, the two top-level commerce actions are `buy` and `sell`: Buyer workflows are available now; Seller workflows will use the same entry point and are not implemented yet.
+> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. The same entry point supports Buyer workflows and the existing `itpay sell` Seller workflow.
 
 ## 范围与意义
 
@@ -44,7 +44,7 @@ itpay --agent-type <agent_type> services start <service_id>
 }
 ```
 
-Start API 只提供免费额度上限，不提供当前剩余额度，因此本命令不得虚构 `remaining`。不得输出全部 capability DTO、contract version、graph ID、buyer/device ID 或重复 guidance。若服务不存在，recovery 为 `catalog list`。设备 session 由 CLI 自动登记或刷新；401 `agent_device_session_required` 仅续期并重试一次，仍失败时返回错误，不循环。
+Start API 只提供免费额度上限，不提供当前剩余额度，因此本命令不得虚构 `remaining`。不得输出全部 capability DTO、contract version、Arazzo workflow、buyer/device ID 或重复 guidance。若服务不存在，recovery 为 `catalog list`。设备 session 由 CLI 自动登记或刷新；401 `agent_device_session_required` 仅续期并重试一次，仍失败时返回错误，不循环。
 
 ## Agent Type / Host
 

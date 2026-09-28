@@ -1,9 +1,13 @@
+import { agentAuth } from "./state/account_auth.js";
+import { registerSell } from "./sell/commands.js";
+import { readFileSync as readWorkflowInputFile, statSync as statWorkflowInputFile } from "node:fs";
+import { runServicesRun } from "./commands/services.js";
 // V3 CLI entrypoint. Each command maps 1:1 to a route family in
 // services/backend/internal/httpapi/handlers/*.go. Commands only
 // orchestrate; HTTP and rendering live in src/client and src/render.
 import { Command } from "commander";
 import { BackendOverrideError, CLI_VERSION, cliDistribution, loadConfig, cartSessionPath, newBackendClient } from "./state/config.js";
-import { DeviceAuthority, DeviceAuthorizationError, DeviceStateError } from "./state/device_authority.js";
+import { DeviceAuthority, DeviceAuthorizationError, DeviceLockBusyError, DeviceStateError } from "./state/device_authority.js";
 import { CartSession } from "./state/cart_session.js";
 import { defaultHostForAgentType, normalizeHost, validateContext } from "./state/client_context.js";
 import { HttpError } from "./client/http.js";
@@ -25,7 +29,7 @@ import { runInstall } from "./commands/install.js";
 import { runSkillShow } from "./commands/skill.js";
 import { runNext } from "./commands/next.js";
 import { runVaultAccess, runVaultList, runVaultRead } from "./commands/vault.js";
-import { collectOption, parseKeyValueList, runServicesAction, runServicesCheckout, runServicesEvents, runServicesGet, runServicesInvoke, runServicesList, runServicesNext, runServicesReadResult, runServicesQuote, runServicesStart, } from "./commands/services.js";
+import { collectOption, parseKeyValueList, runServicesAction, runServicesCheckout, runServicesEvents, runServicesGet, runServicesInvoke, runServicesList, runServicesNext, runServicesPage, runServicesReadResult, runServicesQuote, runServicesStart, } from "./commands/services.js";
 const program = new Command();
 program
     .name("itpay")
@@ -112,6 +116,7 @@ function reportCLIError(error, contract) {
     const backendOverrideError = error instanceof BackendOverrideError ? error : undefined;
     const deviceError = error instanceof DeviceAuthorizationError ? error : undefined;
     const stateError = error instanceof DeviceStateError ? error : undefined;
+    const lockError = error instanceof DeviceLockBusyError ? error : undefined;
     const transportError = error instanceof HttpTransportError ? error : undefined;
     const httpRecovery = errorRecoveryActions(error).map((action) => ({
         command: action.command,
@@ -133,28 +138,47 @@ function reportCLIError(error, contract) {
     const providerInputRejected = error instanceof HttpError && error.code === "provider_input_rejected";
     const providerContractMismatch = error instanceof HttpError && error.code === "provider_contract_mismatch";
     const capabilityInputInvalid = error instanceof HttpError && error.code === "capability_input_invalid";
-    const deviceRecovery = deviceError ? [{
+    const deviceKeyResettable = Boolean(deviceError && (deviceError.code === "agent_device_key_rotated" ||
+        deviceError.code === "agent_device_key_conflict" ||
+        (deviceError.enrollmentFailed && deviceError.status === 500)));
+    const deviceRecovery = deviceError ? [
+        {
             command: "itpay skill show itpay --json",
             reason: "读取 ItPay 身份边界；该错误需要用户或运营恢复 Backend 登记，不能通过换类型或删除本地身份绕过",
-        }] : [];
+        },
+        ...(deviceKeyResettable ? [{
+                command: "itpay device reset-key --confirm-key-reset --json",
+                reason: "服务端拒绝以当前私钥完成设备登记；生成全新 Ed25519 密钥并重新登记（旧设备身份在服务端保留为孤儿，不影响新身份和额度谱系）",
+            }] : []),
+    ] : [];
     const stateRecovery = stateError ? [{
             command: "itpay skill show itpay --json",
             reason: "读取 Device 状态边界；修复当前 Host 的持久写权限后重试原命令",
         }] : [];
+    const lockRecovery = lockError ? [{
+            command: "itpay device repair-lock --json",
+            reason: "检查锁持有者；只回收已退出进程留下的锁，不改变设备身份",
+        }] : [];
     const authorizationInstruction = stateError
         ? "当前运行环境无法写入 owner-only Device 状态；请保持同一 Node、CLI 和 Agent Type，在允许持久写入 ~/.itpay-v3 的执行环境中重试。不要手工创建 lock、删除 identity 或换运行时碰运气。"
-        : error instanceof HttpError && error.code === "agent_device_session_required"
-            ? "CLI 已自动续期并重试同一请求一次，仍被拒绝；停止重试，不要切换 Agent Type 或旋转身份。"
-            : deviceError?.code === "agent_device_revoked"
-                ? "Backend 已撤销当前 Device 登记；CLI 没有自动创建替代身份。停止重试并请用户或运营恢复登记。"
-                : deviceError
-                    ? "Device 身份验证失败；停止重试，不要切换 Agent Type、删除状态或旋转私钥。"
-                    : undefined;
-    if (contract || commandError || backendOverrideError) {
+        : lockError
+            ? "另一个进程仍在更新本地身份。执行 recovery 检查；若持有者仍活跃，等待后继续原任务，不要删除锁或重建身份。"
+            : error instanceof HttpError && error.code === "agent_device_session_required"
+                ? "CLI 已自动续期并重试同一请求一次，仍被拒绝；停止重试，不要切换 Agent Type 或旋转身份。"
+                : deviceError?.code === "agent_device_revoked"
+                    ? "Backend 已撤销当前 Device 登记；CLI 没有自动创建替代身份。停止重试并请用户或运营恢复登记。"
+                    : deviceKeyResettable && deviceError?.status === 500
+                        ? "服务端未能完成设备登记。先原样重试一次原命令：服务端会把已登记的同一公钥幂等挂回原设备。若仍返回 internal_error（Backend 未含该修复），执行 itpay device reset-key --confirm-key-reset 生成全新密钥后重试。"
+                        : deviceKeyResettable
+                            ? "服务端记录显示当前设备私钥已不再有效（已轮换或与既有登记冲突）。执行 itpay device reset-key --confirm-key-reset 生成全新密钥并重新登记。"
+                            : deviceError
+                                ? "Device 身份验证失败；停止重试，不要切换 Agent Type、删除状态或旋转私钥。"
+                                : undefined;
+    if (contract || commandError || backendOverrideError || lockError || stateError) {
         writeCommandEnvelope({
             status: "error",
             error: {
-                code: incompatible ? "backend_contract_incompatible" : backendOverrideError?.code ?? commandError?.code ?? (error instanceof HttpError ? error.code : transportError?.code ?? stateError?.code ?? deviceError?.code ?? contract?.code ?? "command_failed"),
+                code: incompatible ? "backend_contract_incompatible" : backendOverrideError?.code ?? commandError?.code ?? (error instanceof HttpError ? error.code : transportError?.code ?? stateError?.code ?? lockError?.code ?? deviceError?.code ?? contract?.code ?? "command_failed"),
                 message: error instanceof Error ? error.message : String(error),
             },
             ...(requiredCLIVersion ? {
@@ -202,7 +226,7 @@ function reportCLIError(error, contract) {
                                                     ? "临时网络故障；CLI 已仅对可安全重放的操作完成有限自动重试，但仍未获得完整响应。按 recovery 查询同一资源的权威状态；不要创建替代 Checkout、Execution、Payment 或 Refund。"
                                                     : "网络在完整响应前中断；当前写操作没有安全重放合同，因此 CLI 未自动重试。按 recovery 查询权威状态；不要原样重放或创建替代 Checkout、Execution、Payment 或 Refund。"
                                                 : backendOverrideError
-                                                    ? "移除 ITPAY_BACKEND_URL 使用正式环境，或准确设置为 https://dev.itpay.ai。"
+                                                    ? "移除 ITPAY_BACKEND_URL 使用正式环境，或按当前测试目标准确设置为 https://sandbox.itpay.ai 或 https://dev.itpay.ai。不要通过切换环境规避当前错误。"
                                                     : commandError?.instruction ?? authorizationInstruction ?? contract?.instruction ?? "检查命令参数后重试。",
             next: null,
             recovery: incompatible
@@ -211,9 +235,9 @@ function reportCLIError(error, contract) {
                     : []
                 : backendInternal || providerConnectionUnavailable || providerTemporary || providerInputRejected || providerContractMismatch || providerRejected || capabilityInputInvalid
                     ? []
-                    : backendOverrideError ? [] : commandError?.recovery ?? (stateError ? stateRecovery : deviceError ? deviceRecovery : identityRecovery ? httpRecovery : contract?.recovery ?? []),
+                    : backendOverrideError ? [] : commandError?.recovery ?? (stateError ? stateRecovery : lockError ? lockRecovery : deviceError ? deviceRecovery : identityRecovery ? httpRecovery : contract?.recovery ?? []),
         }, {
-            ...(contract?.jsonOutput !== undefined ? { jsonOutput: contract.jsonOutput } : backendOverrideError ? { jsonOutput: process.argv.includes("--json") } : {}),
+            ...(contract?.jsonOutput !== undefined ? { jsonOutput: contract.jsonOutput } : backendOverrideError || lockError || stateError ? { jsonOutput: process.argv.includes("--json") } : {}),
             output: (text) => { process.stderr.write(text); },
         });
         process.exitCode = 1;
@@ -288,8 +312,56 @@ program
         });
     }
 });
+const authCmd = program.command("auth").description("Log in and bind this enrolled Agent to your ItPay account");
+for (const action of ["login", "status"]) {
+    authCmd.command(action).option("--json", "output JSON").action(async (options) => {
+        const config = loadConfig();
+        try {
+            const result = await agentAuth(action, config.baseURL, newBackendClient(config));
+            // AUTH06: auth output goes through the same envelope renderer as every
+            // other command — next/recovery keep Agent Type + Backend qualification
+            // and non-JSON output is human-readable instead of a raw JSON dump.
+            const envelope = {
+                status: String(result.status ?? "error"),
+                result: (result.result ?? result),
+                ...(result.handoff ? { handoff: result.handoff } : {}),
+                instruction: typeof result.instruction === "string" ? result.instruction : "按返回状态继续。",
+                next: (result.next ?? null),
+                recovery: (result.recovery ?? []),
+            };
+            writeCommandEnvelope(envelope, { jsonOutput: Boolean(options.json) });
+        }
+        catch (error) {
+            reportCLIError(error, { jsonOutput: Boolean(options.json), code: "account_login_failed", instruction: "完成官方网页登录后重试 itpay auth status；不要清除设备登记。" });
+        }
+    });
+}
 // --- device ---------------------------------------------------------------
 const deviceCmd = program.command("device").description("Recover the current official Backend registration after an operator-confirmed reset");
+deviceCmd
+    .command("repair-lock")
+    .description("Safely inspect and recover a local Device identity lock left by an exited process")
+    .option("--json", "output JSON instead of terminal text")
+    .action((options) => {
+    try {
+        const config = loadConfig();
+        const status = new DeviceAuthority({
+            baseURL: config.baseURL,
+            ...(config.agentType ? { requestedAgentType: config.agentType } : {}),
+            compatibilityHeaders: {},
+        }).repairLock();
+        writeCommandEnvelope({
+            status: status === "recovered" ? "device_lock_recovered" : status === "active" ? "device_lock_active" : "device_lock_absent",
+            result: { lock_status: status, device_identity_preserved: true },
+            instruction: status === "active" ? "本地身份正由存活进程更新；稍后继续原任务。" : "本地锁无需进一步处理；继续原任务。",
+            next: null,
+            recovery: [],
+        }, { jsonOutput: Boolean(options.json), plainResult: [`lock: ${status}`, "device_identity: preserved"] });
+    }
+    catch (error) {
+        reportCLIError(error, { jsonOutput: Boolean(options.json), code: "device_lock_repair_failed", instruction: "本地锁无法安全检查；保留设备身份并联系维护者。" });
+    }
+});
 deviceCmd
     .command("recover")
     .description("Forget only the current official Backend registration while preserving the local private key")
@@ -338,6 +410,53 @@ deviceCmd
             jsonOutput: Boolean(options.json),
             code: "device_recovery_failed",
             instruction: "仅恢复运营已确认重建的当前 Backend；不要删除整个 Device identity。",
+            recovery: [{ command: "itpay docs show identity-and-sessions --json", reason: "检查 Device 恢复边界" }],
+        });
+    }
+});
+deviceCmd
+    .command("reset-key")
+    .description("Discard the local Ed25519 device key and all Backend registrations so the next command enrolls as a new device")
+    .option("--confirm-key-reset", "confirm that the current device key must be abandoned and a new identity created")
+    .option("--json", "output JSON instead of terminal text")
+    .action(async (options) => {
+    const config = loadConfig();
+    try {
+        if (!options.confirmKeyReset) {
+            throw new CommandContractError("key_reset_confirmation_required", "--confirm-key-reset is required", "仅当服务端拒绝以当前私钥完成设备登记（internal_error、agent_device_key_rotated 或 agent_device_key_conflict）时使用；会放弃本地设备身份并重新登记，旧设备在服务端保留为孤儿。", [{ command: "itpay docs show identity-and-sessions --json", reason: "检查适用边界" }]);
+        }
+        const reset = await new DeviceAuthority({
+            baseURL: config.baseURL,
+            ...(config.agentType ? { requestedAgentType: config.agentType } : {}),
+            compatibilityHeaders: {},
+        }).resetDeviceKey();
+        writeCommandEnvelope({
+            status: "device_key_reset",
+            result: {
+                removed_backend_registrations: reset.removedBackends,
+                private_key_preserved: false,
+                server_side_device: "orphaned_under_previous_key",
+            },
+            instruction: "本地设备私钥已重置；下一次需要设备身份的命令会以全新 Ed25519 密钥重新登记并获得新的额度谱系。服务端旧设备记录保留为孤儿；如需清理请走运营流程。",
+            next: {
+                command: `itpay --agent-type ${config.agentType ?? "<agent_type>"} services list --limit 1 --json`,
+                reason: "用无业务写入的签名请求完成新密钥的重新登记",
+            },
+            recovery: [],
+        }, {
+            jsonOutput: Boolean(options.json),
+            plainResult: [
+                `removed_backend_registrations: ${reset.removedBackends.join(", ") || "none"}`,
+                "private_key: rotated (previous key discarded)",
+                "server_side_device: orphaned under previous key",
+            ],
+        });
+    }
+    catch (error) {
+        reportCLIError(error, {
+            jsonOutput: Boolean(options.json),
+            code: "device_key_reset_failed",
+            instruction: "仅在确认要放弃当前设备私钥时使用；普通 session 失效或 revoked 不需要本命令。",
             recovery: [{ command: "itpay docs show identity-and-sessions --json", reason: "检查 Device 恢复边界" }],
         });
     }
@@ -816,6 +935,13 @@ program
     .option("--id <checkout_id>")
     .option("--token <display_token>")
     .option("--locale <locale>", "payment card language: zh-CN|en", "zh-CN")
+    .option("--present <method>", "display once: auto|browser|image|link|none (JSON default plans only)")
+    .option("--no-open", "never open a browser window")
+    .option("--viewer <viewer>", "device the human is looking at: desktop|mobile|unknown")
+    .option("--relay-option <ref>", "server-issued contact option reference for message relay")
+    .option("--confirm-relay", "confirm the human explicitly consented to this relay send")
+    .option("--request-key <key>", "stable idempotency key for a relay request")
+    .option("--relay-status <relay_id>", "read a prior relay result; never resends")
     .option("--json", "output compact JSON")
     .action(async (options) => {
     const config = loadConfig();
@@ -833,12 +959,22 @@ program
         await runCheckoutPresentation(backend, {
             checkoutID,
             displayToken,
+            ...(snap.lastCheckoutID === checkoutID && snap.lastCheckoutURL
+                ? { savedCheckoutURL: snap.lastCheckoutURL }
+                : {}),
             host,
             ...(options.target ? { target: options.target } : {}),
             ...(config.agentType ? { agentType: config.agentType } : {}),
             baseURL: config.baseURL,
             locale: options.locale,
             jsonOutput: Boolean(options.json),
+            ...(options.present ? { present: options.present } : {}),
+            ...(options.noOpen ? { noOpen: true } : {}),
+            ...(options.viewer ? { viewer: options.viewer } : {}),
+            ...(options.relayOption ? { relayOption: options.relayOption } : {}),
+            ...(options.confirmRelay ? { confirmRelay: true } : {}),
+            ...(options.requestKey ? { requestKey: options.requestKey } : {}),
+            ...(options.relayStatus ? { relayStatus: options.relayStatus } : {}),
         });
     }
     catch (error) {
@@ -1214,7 +1350,98 @@ vault
     }
 });
 // --- service execution ----------------------------------------------------
+const WORKFLOW_INPUT_JSON_MAX_BYTES = 256 * 1024;
+function readInputJsonObject(file, code, recovery) {
+    let parsed;
+    try {
+        if (statWorkflowInputFile(file).size > WORKFLOW_INPUT_JSON_MAX_BYTES) {
+            throw new CommandContractError(code, `--input-json file exceeds ${WORKFLOW_INPUT_JSON_MAX_BYTES} bytes`, "输入文件过大；只提交服务端 input_schema 声明的字段。", recovery);
+        }
+        parsed = JSON.parse(readWorkflowInputFile(file, "utf8"));
+    }
+    catch (error) {
+        if (error instanceof CommandContractError)
+            throw error;
+        throw new CommandContractError(code, `--input-json is not readable valid JSON: ${error instanceof Error ? error.message : String(error)}`, "确认文件存在且为合法 JSON；按服务端 input_schema 字段填写。", recovery);
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        throw new CommandContractError(code, "--input-json must contain a JSON object", "确认输入必须是 JSON 对象；按服务端 input_schema 字段填写。", recovery);
+    }
+    return parsed;
+}
 const services = program.command("services").description("Generic V3 Service Execution commands");
+services
+    .command("run")
+    .description("Run a published service and present Checkout when payment is required")
+    .argument("<service_id>")
+    .option("--input-json <file>", "JSON object containing the service input")
+    .option("--execution <execution_id>", "resume the same execution")
+    .option("--timeout <seconds>", "maximum wait before returning current progress", Number, 120)
+    .option("--host <host>")
+    .option("--target <target>")
+    .option("--json", "output JSON")
+    .action(async (serviceID, options) => {
+    const config = loadConfig();
+    try {
+        const input = options.inputJson
+            ? readInputJsonObject(options.inputJson, "workflow_input_invalid", [
+                { command: `itpay services run ${serviceID} --json`, reason: "重新读取服务输入声明" },
+            ])
+            : undefined;
+        if (!Number.isFinite(options.timeout) || options.timeout < 0 || options.timeout > 600) {
+            throw new Error("timeout must be between 0 and 600 seconds");
+        }
+        await runServicesRun(newBackendClient(config), config, serviceID, input, {
+            ...(options.execution ? { executionID: options.execution } : {}),
+            jsonOutput: Boolean(options.json),
+            host: withHost(options.host, config.agentType, options.target),
+            ...(options.target ? { target: options.target } : {}),
+            timeoutSeconds: options.timeout,
+        });
+    }
+    catch (error) {
+        reportCLIError(error, {
+            jsonOutput: Boolean(options.json), code: "workflow_run_failed",
+            instruction: "按服务输入声明补齐参数；已有 execution 时继续该执行。", recovery: [],
+        });
+    }
+});
+services
+    .command("page")
+    .description("Read one page of a saved service result set (same stored version, no re-query, no quota)")
+    .argument("<service_execution_id>")
+    .argument("<result_item_id>")
+    .option("--offset <offset>", "zero-based candidate offset", Number, 0)
+    .option("--cursor <cursor>", "opaque v2 page cursor (rcur_<offset>); takes precedence over --offset")
+    .option("--limit <limit>", "page size (1-20)", Number, 20)
+    .option("--json", "output JSON")
+    .action(async (serviceExecutionID, resultItemID, options) => {
+    const config = loadConfig();
+    const backend = newBackendClient(config);
+    try {
+        const cursorOffset = typeof options.cursor === "string" && /^rcur_\d+$/.test(options.cursor)
+            ? Number(options.cursor.slice(5))
+            : undefined;
+        if (options.cursor !== undefined && cursorOffset === undefined) {
+            throw new CommandContractError("cursor_invalid", "--cursor must be an opaque rcur_<offset> token from a previous page response", "--cursor 需为上一页返回的 rcur_<offset> 不透明游标。", []);
+        }
+        await runServicesPage(backend, serviceExecutionID, resultItemID, {
+            offset: cursorOffset ?? options.offset,
+            limit: options.limit,
+            jsonOutput: Boolean(options.json),
+        });
+    }
+    catch (error) {
+        reportCLIError(error, {
+            jsonOutput: Boolean(options.json),
+            code: "service_page_failed",
+            instruction: "分页读取的是已保存的同版本结果；不要重新发起查询或新建 execution。",
+            recovery: [
+                { command: `itpay services next ${serviceExecutionID} --json`, reason: "读取当前结果页与合法动作" },
+            ],
+        });
+    }
+});
 services
     .command("start")
     .description("Start a contract-backed service execution")
@@ -1281,12 +1508,18 @@ services
     .option("--result-item <service_capability_result_item_id>")
     .option("--required-before <step>")
     .option("--input <key=value>", "action input snapshot", collectOption, [])
+    .option("--input-json <file>", "JSON object containing the full action input snapshot")
     .option("--json", "output JSON instead of terminal text")
     .action(async (serviceExecutionID, options) => {
     const config = loadConfig();
     const backend = newBackendClient(config);
     try {
-        await runServicesAction(backend, serviceExecutionID, options.action, parseKeyValueList(options.input), {
+        const recovery = [{ command: `itpay services next ${serviceExecutionID} --json`, reason: "读取当前动作要求" }];
+        if (options.inputJson && options.input.length > 0) {
+            throw new CommandContractError("service_action_invalid", "--input and --input-json cannot be combined", "--input 与 --input-json 只能二选一：嵌套结构用 --input-json <file>，扁平键值用 --input key=value。", recovery);
+        }
+        const fileInput = options.inputJson ? readInputJsonObject(options.inputJson, "service_action_invalid", recovery) : {};
+        await runServicesAction(backend, serviceExecutionID, options.action, { ...fileInput, ...parseKeyValueList(options.input) }, {
             ...(options.actorType ? { actorType: options.actorType } : {}),
             ...(options.actorId ? { actorID: options.actorId } : {}),
             ...(options.status ? { status: options.status } : {}),
@@ -1431,12 +1664,17 @@ services
     .command("next")
     .description("Show the next recommended agent action for a Service Execution")
     .argument("<service_execution_id>")
+    .option("--since-snapshot <snapshot_id>", "delta read: suppress the journey payload when unchanged")
+    .option("--timeout <seconds>", "wait up to 120 seconds for a useful result on this execution", (value) => Number(value))
     .option("--json", "output JSON instead of terminal text")
     .action(async (serviceExecutionID, options) => {
     const config = loadConfig();
     const backend = newBackendClient(config);
     try {
-        await runServicesNext(backend, serviceExecutionID, { jsonOutput: Boolean(options.json) });
+        if (options.timeout !== undefined && (!Number.isInteger(options.timeout) || options.timeout < 0 || options.timeout > 120)) {
+            throw new Error("--timeout must be an integer from 0 to 120");
+        }
+        await runServicesNext(backend, serviceExecutionID, { jsonOutput: Boolean(options.json), sinceSnapshot: options.sinceSnapshot, timeoutSeconds: options.timeout });
     }
     catch (error) {
         reportCLIError(error, {
@@ -1451,12 +1689,14 @@ services
     .command("read-result")
     .description("Read a human-granted service result for this agent")
     .argument("<service_execution_id>")
+    .option("--snapshot <snapshot_id>", "rail.progressive.v2: read one journey from a committed planning snapshot")
+    .option("--journey <journey_id>", "rail.progressive.v2: journey id to read")
     .option("--json", "output JSON instead of terminal text")
     .action(async (serviceExecutionID, options) => {
     const config = loadConfig();
     const backend = newBackendClient(config);
     try {
-        await runServicesReadResult(backend, serviceExecutionID, { jsonOutput: Boolean(options.json) });
+        await runServicesReadResult(backend, serviceExecutionID, { jsonOutput: Boolean(options.json), snapshot: options.snapshot, journey: options.journey });
     }
     catch (error) {
         reportCLIError(error, {
@@ -1496,6 +1736,7 @@ services
         });
     }
 });
+registerSell(program);
 program.parseAsync(process.argv).catch((error) => {
     reportCLIError(error);
 });

@@ -64,6 +64,8 @@ export function defaultHostForAgentType(agentType) {
         return "plain-chat";
     if (normalized === "zcode")
         return "plain-chat";
+    if (normalized === "doubao-work")
+        return "plain-chat";
     if (normalized === "openclaw")
         return undefined;
     return "terminal";
@@ -76,4 +78,74 @@ export function validateContext(host, target) {
         return { code: "target_required", message: `--target is required for host ${host}` };
     }
     return undefined;
+}
+export function normalizeViewer(raw) {
+    const v = raw?.trim().toLowerCase();
+    if (v === "desktop" || v === "mobile")
+        return v;
+    return "unknown";
+}
+export function normalizeLocality(raw) {
+    const v = raw?.trim().toLowerCase();
+    if (v === "same_device" || v === "remote" || v === "cloud")
+        return v;
+    return "unknown";
+}
+// Conservative declared capability table per host. Terminal/desktop agent
+// hosts run where a human watches a screen and a system browser exists;
+// IM hosts can send links/buttons but cannot be assumed to open pages;
+// plain-chat surfaces get links and copyable entries only.
+export function hostCapabilities(host) {
+    switch (host) {
+        case "terminal":
+        case "codex":
+        case "claude-code":
+            return {
+                user_visible_browser: "unknown",
+                system_browser: "yes",
+                clickable_https: "yes",
+                image_visible: host === "terminal" ? "no" : "unknown",
+                native_url_button: "no",
+                user_visible_terminal: "yes",
+                other_device_scan: "yes",
+                send_message: "yes",
+            };
+        case "telegram":
+        case "feishu":
+        case "lark":
+            return {
+                user_visible_browser: "no",
+                system_browser: "no",
+                clickable_https: "yes",
+                image_visible: "yes",
+                native_url_button: "yes",
+                user_visible_terminal: "no",
+                other_device_scan: "unknown",
+                send_message: "yes",
+            };
+        case "discord":
+        case "whatsapp":
+            return {
+                user_visible_browser: "no",
+                system_browser: "no",
+                clickable_https: "yes",
+                image_visible: "yes",
+                native_url_button: "unknown",
+                user_visible_terminal: "no",
+                other_device_scan: "unknown",
+                send_message: "yes",
+            };
+        case "plain-chat":
+        default:
+            return {
+                user_visible_browser: "no",
+                system_browser: "unknown",
+                clickable_https: "yes",
+                image_visible: "no",
+                native_url_button: "unknown",
+                user_visible_terminal: "no",
+                other_device_scan: "unknown",
+                send_message: "yes",
+            };
+    }
 }

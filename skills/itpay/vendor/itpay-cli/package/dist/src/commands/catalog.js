@@ -25,10 +25,12 @@ export async function runCatalogList(backend, options = {}) {
 }
 function summarizeService(item) {
     const flow = item.service_flow;
+    const offer = item.variants?.[0];
     return {
         service_id: item.service_id ?? null,
         title: item.title,
         description: item.description ?? "",
+        ...(item.service_id?.startsWith("itpay-rail-") ? { guide: "itpay docs show rail-booking --json" } : {}),
         ...(flow ? {
             discovery: {
                 title: flow.discovery.title,
@@ -42,6 +44,12 @@ function summarizeService(item) {
                 title: flow.primary_service.title,
                 description: flow.primary_service.description,
                 price: formatProductMoney(flow.primary_service.amount_minor, flow.primary_service.currency),
+            },
+        } : offer ? {
+            primary_offer: {
+                title: offer.title || item.title,
+                description: item.description ?? "",
+                price: formatProductMoney(offer.amount_minor, offer.currency),
             },
         } : {}),
     };

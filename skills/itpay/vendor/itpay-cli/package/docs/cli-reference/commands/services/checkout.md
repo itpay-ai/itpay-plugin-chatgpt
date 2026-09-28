@@ -1,12 +1,16 @@
 # `itpay services checkout`
 
-> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. Under that one product entry point, the two top-level commerce actions are `buy` and `sell`: Buyer workflows are available now; Seller workflows will use the same entry point and are not implemented yet.
+> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. The same entry point supports Buyer workflows and the existing `itpay sell` Seller workflow.
 
 ## 范围与意义
 
 为单个 Service Execution 快速创建或恢复 Checkout，并按 Host 向人交接付款入口。它是 `services quote -> cart add --quote -> buy --cart` 的单项快捷方式，必须复用相同的 Quote、Cart 和 Checkout Use Case。
 
-**上游：** `services next` 返回的 `prepare_quote` capability 和已验证输入。
+未注册/未登录用户不要求先执行 `itpay auth login`（Path B）：官方 checkout 页内完成必要的钱包认证、创建或复用账号并取得页面权限；人在页面上确认旅客、通知联系方式和最终报价后付款。支付确认沿用既有设备绑定机制，不再独立绑定。checkout 内完成账号认证不等于账号已通过手机号验证；钱包显示名、账号手机号与乘车人身份互相独立。
+
+**通知联系方式（铁路单）：** 订单级联系策略要求至少一个可用通道——邮箱，或在 checkout 页内经验证的大陆手机号（order-contact 验证码只校验收件人，不创建/合并登录身份）。有效邮箱即可独立完成 checkout；SMS 不是必填项，SMS 能力未配置时不得阻塞邮箱通道。该策略仅适用于铁路订单，企知道等既有服务的联系策略不变。乘客证件手机号、账号登录手机号与通知收件人是三个独立事实，互不替代。
+
+**上游：** `services next` 返回的 `prepare_quote` capability 和已验证输入。铁路购票执行必须先通过 `workflow:confirm_booking` review（见 `services next` 的 `booking_review_required`），后端才生成可支付报价；review 开放期间不创建 Checkout。
 **下游：** 人完成 Checkout，随后 `checkout` 或 `services next`。
 
 ## 语法与参数
@@ -84,6 +88,7 @@ itpay services checkout <service_execution_id> --resume
 | `claude-code-cli` | `handoff={url}`；普通文本模式在用户可见终端渲染二维码。 |
 | `workbuddy` | `handoff={url,agent_action}`；原样执行一次 `present_files(files=[url])` 打开完整渲染的 HTML Card Link，然后停止；不得检查或生成本地文件。 |
 | `zcode` | `handoff={url}`；立即用 ZCode 内置浏览器打开，然后停止；只有浏览器不可用时才展示同一个可点击链接。 |
+| `doubao-work` | `handoff={url,qr_image_url}`；在当前对话中展示手机直达收银台链接和官方二维码图片链接，说明金额后停止。 |
 | `kimi-code` | `handoff={url}`；复用标准 CLI 终端展示。 |
 | `openclaw` | 必须显式传 Host；Telegram 还必须传 OpenClaw 原生 Target，并返回必须原样执行的 `message` action；其他入口返回标准 `url,qr_image_url`。 |
 
@@ -97,6 +102,12 @@ ZCode 的准确 instruction 语义必须完整包含：
 
 ```text
 Backend 尚未确认付款。立即用 ZCode 内置浏览器打开 handoff.url，让用户完成付款；确认已发起打开后说明金额，然后停止等待。不要只粘贴文字链接，不要下载、解析或重建二维码，不要创建新 Checkout、Payment Intent 或 Execution。只有内置浏览器明确不可用时，才展示同一个可点击 handoff.url。只有用户明确表示已付款或要求查询状态时，才执行 next.command；用户的话不是付款成功证明。
+```
+
+Doubao Work 的准确 instruction 语义必须完整包含：
+
+```text
+Backend 尚未确认付款。在当前豆包工作对话中展示两个有标签的官方入口：将 handoff.url 标为“手机直接打开收银台”，将 handoff.qr_image_url 标为“二维码图片（保存或用另一台设备扫码）”。说明金额后停止等待。不要解析或单独输出 URL credential，不要下载或重建二维码，不要调用 pay，不要创建新 Checkout、Payment Intent 或 Execution。只有用户明确表示已付款或要求查询状态时，才执行 next.command；用户的话不是付款成功证明。
 ```
 
 `--locale` 默认 `zh-CN`，可显式使用 `--locale en`。语言只影响 Card 渲染，不改变 Checkout、付款或恢复状态。

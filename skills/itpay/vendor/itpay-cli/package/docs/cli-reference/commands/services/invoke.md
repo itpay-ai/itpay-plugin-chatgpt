@@ -1,13 +1,13 @@
 # `itpay services invoke`
 
-> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. Under that one product entry point, the two top-level commerce actions are `buy` and `sell`: Buyer workflows are available now; Seller workflows will use the same entry point and are not implemented yet.
+> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. The same entry point supports Buyer workflows and the existing `itpay sell` Seller workflow.
 
 ## 范围与意义
 
 调用当前 phase 允许的非付费 Agent-visible capability。输入先按 capability schema 校验，校验失败不得迁移 execution 或记录 Provider 已调用。
 
 **上游：** `services start/next` 明确返回 invoke。
-**下游：** 候选结果、人工 action 或付费 Quote。一次 invoke 没有结果或返回 Provider 错误时必须停止；只有用户之后明确提供新输入，才启动新的 execution。
+**下游：** 候选结果、人工 action 或付费 Quote。此页的候选人工选择示例适用于相应的非铁路服务；铁路按 `rail-booking` 的已保存结果和委托选择合同。Provider 错误先按实际错误码和当前 execution 状态恢复，不猜新输入或自动新建。
 
 ## 语法与参数
 
@@ -19,6 +19,8 @@ itpay services invoke <service_execution_id> --capability <capability_id>
 `--input` 可重复；必填 key 来自 `input_schema.required`，值按 schema 类型解析。Agent 不猜字段名。
 
 ## 有结果输出
+
+以下是非铁路候选服务的示例。铁路使用 `services run` 和 `services read-result` 返回的范围、完整紧凑目录与当前动作；不要把这里的 `select_candidate` 人工动作套用到已授权委托的铁路选择。
 
 ```json
 {

@@ -23,12 +23,17 @@ export class CommandContractError extends Error {
         this.name = "CommandContractError";
     }
 }
+// stdoutEnvelopeLimit is the hard byte budget for one emitted JSON envelope:
+// public rail pages/projections must fit 32 KiB end-to-end, so oversized
+// pretty output falls back to a compact line rather than spilling.
+const stdoutEnvelopeLimit = 32 * 1024;
 export function writeCommandEnvelope(value, options = {}) {
     const out = resolveOutput(options.output);
     const agentType = options.agentType ?? declaredAgentType();
     const qualified = qualifyEnvelope(value, agentType);
     if (options.jsonOutput) {
-        out(JSON.stringify(qualified, null, 2) + "\n");
+        const pretty = JSON.stringify(qualified, null, 2) + "\n";
+        out(pretty.length <= stdoutEnvelopeLimit ? pretty : JSON.stringify(qualified) + "\n");
         return;
     }
     out(`${qualified.status}\n`);
@@ -55,6 +60,12 @@ export function writeCommandEnvelope(value, options = {}) {
     out(`instruction: ${qualified.instruction}\n`);
     if (qualified.next)
         out(`next: ${qualified.next.command}\n`);
+    if ("interaction" in qualified && qualified.interaction) {
+        out(`interaction: ${JSON.stringify(qualified.interaction)}\n`);
+    }
+    if ("communication" in qualified && qualified.communication) {
+        out(`communication: ${JSON.stringify(qualified.communication)}\n`);
+    }
     if (qualified.recovery.length > 0) {
         out("recovery:\n");
         for (const action of qualified.recovery) {
@@ -66,12 +77,33 @@ export function writeCommandEnvelope(value, options = {}) {
 function qualifyEnvelope(value, agentType) {
     return {
         ...value,
+        result: qualifyCommandsDeep(value.result, agentType),
+        ...("handoff" in value && value.handoff ? { handoff: qualifyCommandsDeep(value.handoff, agentType) } : {}),
+        ...("interaction" in value && value.interaction ? { interaction: qualifyCommandsDeep(value.interaction, agentType) } : {}),
+        ...("communication" in value && value.communication ? { communication: qualifyCommandsDeep(value.communication, agentType) } : {}),
         next: value.next ? { ...value.next, command: qualifyBackendCommand(qualifyItPayCommand(value.next.command, agentType)) } : null,
         recovery: value.recovery.map((action) => ({
             ...action,
             command: qualifyBackendCommand(qualifyItPayCommand(action.command, agentType)),
         })),
     };
+}
+// Every `itpay ` command string anywhere in the envelope — result fields,
+// interaction recipes/templates, available_actions — keeps the same Agent
+// Type / Backend qualification as top-level next/recovery. Instruction prose
+// never starts with "itpay " so prose stays untouched.
+function qualifyCommandsDeep(value, agentType) {
+    if (typeof value === "string") {
+        return value.startsWith("itpay ")
+            ? qualifyBackendCommand(qualifyItPayCommand(value, agentType))
+            : value;
+    }
+    if (Array.isArray(value))
+        return value.map((item) => qualifyCommandsDeep(item, agentType));
+    if (value && typeof value === "object") {
+        return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, qualifyCommandsDeep(item, agentType)]));
+    }
+    return value;
 }
 export function errorRecoveryActions(error) {
     if (!(error instanceof HttpError))

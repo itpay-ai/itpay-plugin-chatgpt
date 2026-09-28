@@ -1,6 +1,6 @@
 # `itpay catalog list`
 
-> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. Under that one product entry point, the two top-level commerce actions are `buy` and `sell`: Buyer workflows are available now; Seller workflows will use the same entry point and are not implemented yet.
+> **Product boundary:** `itpay` is the single public CLI entry point, and `$itpay` is its user-facing Skill invocation. The same entry point supports Buyer workflows and the existing `itpay sell` Seller workflow.
 
 ## 范围与意义
 
@@ -40,7 +40,7 @@ itpay catalog list [--json]
 
 ## 异常处理
 
-输出不得包含 snapshot、manifest 原文、compiled graph 或 Provider secret。服务为空时返回 `catalog_empty`，要求稍后重试，不猜服务 ID。
+输出不得包含 snapshot、manifest 原文、Arazzo workflow 或 Provider secret。服务为空时返回 `catalog_empty`，要求稍后重试，不猜服务 ID。
 
 ## Agent Type / Host
 
