@@ -3,7 +3,8 @@ name: itpay
 description: >
   Use ItPay in ChatGPT to read Buyer-owned orders and purchased content through
   OAuth MCP, or in local Codex to discover, buy, read, and refund through the
-  bundled CLI.
+  bundled CLI. The local CLI can also record a human's rating of a purchased
+  service.
 ---
 
 # ItPay
