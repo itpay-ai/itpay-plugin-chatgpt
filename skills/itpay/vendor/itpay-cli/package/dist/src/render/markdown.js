@@ -24,6 +24,9 @@ export function buildAgentChatHandoff(plan) {
     if (plan.orderItems?.length) {
         lines.push(`项目：${plan.orderItems.map((item) => `${item.title} x${item.quantity}`).join("、")}`);
     }
+    if (plan.afterActionCommand) {
+        lines.push("", `付款后查询：\`${plan.afterActionCommand}\``);
+    }
     return {
         type: "send_payment_handoff",
         must_send_to_user: true,

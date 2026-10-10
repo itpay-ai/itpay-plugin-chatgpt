@@ -5,18 +5,6 @@ export class BackendClient {
     constructor(http) {
         this.http = http;
     }
-    // Called only through the fixed Sell operation contract, never arbitrary Agent URLs.
-    sellRequest(request) {
-        if (!request.path.startsWith("/v1/seller/organizations") && !request.path.startsWith("/v1/library/"))
-            throw new Error("Invalid Sell route");
-        return this.http.request(request.path, { method: request.method, ...(request.body !== undefined ? { body: request.body } : {}) });
-    }
-    agentAccountStatus() {
-        return this.http.get('/v1/agent-device-account-bindings');
-    }
-    bindAgentAccount(input) {
-        return this.http.post('/v1/agent-device-account-bindings', input);
-    }
     readyz() {
         return this.http.get("/v1/readyz");
     }
@@ -120,13 +108,6 @@ export class BackendClient {
     startServiceExecution(input) {
         return this.http.post("/v1/service-executions", input);
     }
-    advanceServiceExecution(id, input, idempotencyKey) {
-        return this.http.post(`/v1/service-executions/${encodeURIComponent(id)}/advance`, { input, idempotency_key: idempotencyKey });
-    }
-    getServiceExecutionResultItemPage(serviceExecutionID, resultItemID, offset, limit) {
-        const qs = new URLSearchParams({ offset: String(offset), limit: String(limit) });
-        return this.http.get(`/v1/service-executions/${encodeURIComponent(serviceExecutionID)}/result-items/${encodeURIComponent(resultItemID)}?${qs}`);
-    }
     invokeServiceCapability(serviceExecutionID, capabilityID, input) {
         return this.http.post(`/v1/service-executions/${encodeURIComponent(serviceExecutionID)}/capabilities/${encodeURIComponent(capabilityID)}/invoke`, input, { replaySafe: Boolean(input.idempotency_key) });
     }
@@ -139,9 +120,8 @@ export class BackendClient {
     prepareServiceQuote(serviceExecutionID, input) {
         return this.http.post(`/v1/service-executions/${encodeURIComponent(serviceExecutionID)}/quotes`, input, { replaySafe: true });
     }
-    getServiceExecution(serviceExecutionID, opts = {}) {
-        const query = opts.sinceSnapshot ? `?since_snapshot=${encodeURIComponent(opts.sinceSnapshot)}` : "";
-        return this.http.get(`/v1/service-executions/${encodeURIComponent(serviceExecutionID)}${query}`);
+    getServiceExecution(serviceExecutionID) {
+        return this.http.get(`/v1/service-executions/${encodeURIComponent(serviceExecutionID)}`);
     }
     listServiceExecutions(limit = 50) {
         return this.http.get(`/v1/service-executions?limit=${limit}`);
@@ -155,14 +135,6 @@ export class BackendClient {
     }
     getGrantedServiceResult(serviceExecutionID) {
         return this.http.get(`/v1/service-executions/${encodeURIComponent(serviceExecutionID)}/granted-result`);
-    }
-    getRailPlanningCatalog(serviceExecutionID, snapshotID) {
-        const query = snapshotID ? `?snapshot=${encodeURIComponent(snapshotID)}` : "";
-        return this.http.get(`/v1/service-executions/${encodeURIComponent(serviceExecutionID)}/rail-planning/catalog${query}`);
-    }
-    getRailJourneyDetail(serviceExecutionID, journeyID, snapshotID) {
-        const query = snapshotID ? `?snapshot=${encodeURIComponent(snapshotID)}` : "";
-        return this.http.get(`/v1/service-executions/${encodeURIComponent(serviceExecutionID)}/rail-planning/journeys/${encodeURIComponent(journeyID)}${query}`);
     }
 }
 // --- SSE streaming helper ---

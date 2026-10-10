@@ -1,8 +1,8 @@
 name: Sync ItPay CLI bundle
 
 on:
-  schedule:
-    - cron: '11 * * * *'
+  repository_dispatch:
+    types: [itpay-cli-published]
   workflow_dispatch:
 
 jobs:
@@ -12,6 +12,7 @@ jobs:
       contents: write
       pull-requests: write
     with:
+      npm-channel: latest
       bundle-format: npm-tree
       version-files: package.json,.codex-plugin/plugin.json
     secrets:
