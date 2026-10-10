@@ -84,10 +84,10 @@ function loadDocs() {
 function findDocsDir() {
     if (process.env.ITPAY_CLI_DOCS_DIR)
         return resolve(process.env.ITPAY_CLI_DOCS_DIR);
-    const packagePath = resolve(commandDir, "..", "..", "..", "docs", "agent", "buyer");
-    if (existsSync(packagePath))
-        return packagePath;
-    return resolve(commandDir, "..", "..", "docs", "agent", "buyer");
+    const sourcePath = resolve(commandDir, "..", "..", "docs", "agent", "buyer");
+    if (existsSync(sourcePath))
+        return sourcePath;
+    return resolve(commandDir, "..", "..", "..", "docs", "agent", "buyer");
 }
 function parseDoc(raw, file) {
     const value = JSON.parse(raw);
