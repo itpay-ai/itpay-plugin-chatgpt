@@ -1,8 +1,8 @@
 {
   "repository": "itpay-ai/compose-v4",
-  "source_commit": "3cd7d01c3ba4dee0da2136bc2a51484edd62e334",
-  "version": "3.0.0-candidate.2",
-  "package_sha256": "e6da866bad0b23508f78ec08fa72a2b4668986e5a73a1e353cc181f13e5da4b7",
-  "skill_sha256": "450c5c5c0c24ec8a5b2a4aec51561b12af1d8810a1f505a8b4e6c4e2da34791e",
+  "source_commit": "37791d2fcf6382800b5da9e30517f55ec18c3f0c",
+  "version": "3.0.0-candidate.3",
+  "package_sha256": "66c520f6cd6f11d4b9613697aac901ecde5b0143d8ffd6fff14b99fade14daf8",
+  "skill_sha256": "4f498746e0997a406a4bb672dc49130b78ac9b327179d369ff5c46295b98f6ea",
   "scope": "MCP package candidate; connection and activation separately reviewed"
 }

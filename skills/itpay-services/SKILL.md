@@ -22,7 +22,9 @@ facts. Knowledge and web prices are not current inventory or purchasing evidence
 Use only the inspected operation, publication and its current input contract.
 Read the returned facts directly, including saved pages and details. Do not write
 parsers, guess tool arguments, or query a supplier again to read saved results.
-Choose under the user's actual delegation. Ask only for missing choices or
+For an ordinary location-choice action, show the saved candidate names and
+report only the user's actual choice on the original run; never select a default
+or claim it proves authenticated human approval. Choose under the user's actual delegation. Ask only for missing choices or
 materially changed terms, retaining all unchanged constraints.
 
 Follow server-issued actions and their input schema/template on the original
