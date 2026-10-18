@@ -5,7 +5,7 @@ description: Find and use ItPay services through the connected remote MCP, choos
 
 # ItPay services
 
-Use the connected ItPay MCP in both ChatGPT and Codex. Do not install or invoke a
+Use the connected ItPay MCP in the current host. Do not install or invoke a
 CLI for this plugin. If it is disconnected, reconnect through the host or show the
 official authorization link; never switch identity or channel to bypass policy.
 An explicitly requested independent CLI task stays in the CLI. Continue an
