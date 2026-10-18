@@ -57,11 +57,12 @@ jobs:
           MCP_URL: ${{ inputs.mcp_url }}
           CLIENT_ID: ${{ inputs.oauth_client_id }}
           HASH: ${{ inputs.package_sha256 }}
+          SOURCE: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
           python3 source/apps/mcp/scripts/build-chat-packages.py --output "$RUNNER_TEMP/mcp" --mcp-url "$MCP_URL" --oauth-client-id "$CLIENT_ID"
           archive=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["packages"]["itpay-plugin-chatgpt"]["file"])' "$RUNNER_TEMP/mcp/delivery.json")
-          python3 plugin/scripts/apply-mcp-package.py "$RUNNER_TEMP/mcp/$archive" "$HASH"
+          python3 plugin/scripts/apply-mcp-package.py "$RUNNER_TEMP/mcp/$archive" "$HASH" --source-commit "$SOURCE"
           cd plugin
           node --test tests/*.test.mjs
       - name: Propose changed product only
@@ -83,7 +84,7 @@ jobs:
           git switch -c "$branch"
           git config user.name 'ItPay bundle bot'
           git config user.email 'bundle-bot@users.noreply.github.com'
-          git add plugin.json mcp.json skills/itpay-services/SKILL.md LICENSE
+          git add plugin.json mcp.json skills/itpay-services/SKILL.md LICENSE SOURCE.json
           git commit -m "Sync fixed MCP candidate ${SOURCE:0:12}"
           git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push origin "$branch"
           gh pr create --base main --head "$branch" --title "Sync MCP candidate ${SOURCE:0:12}" --body "Fixed compose-v4 source: $SOURCE. No npm/CLI sync or activation. Review before merge."
