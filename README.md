@@ -20,7 +20,10 @@ CLI publish listener or automatic merge. Missing scoped GitHub App permissions
 is an explicit workflow failure, not permission to fall back to old CLI sync.
 
 Run repository checks with `node --test tests/*.test.mjs`.
-For upgrades, replace the old plugin through the host's normal installer; do not
+For upgrades, replace the old plugin through the host's normal installer. Its old
+`skills/itpay` registration must be replaced by `itpay-services`; a manually
+copied old plugin Skill must be disabled through that host before using the new
+plugin. The independent `itpay-buyer` CLI Skill is retained. Do not
 uninstall the independent CLI or copy Device identity into MCP. Explicit CLI
 requests keep their original entry. Existing tasks restore their original owner.
 
