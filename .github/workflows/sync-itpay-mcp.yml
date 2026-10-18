@@ -1,0 +1,90 @@
+name: Sync fixed ItPay MCP candidate
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Reviewed full compose-v4 commit SHA
+        required: true
+      package_sha256:
+        description: Reviewed OpenAI ZIP SHA-256
+        required: true
+      mcp_url:
+        description: Verified new HTTPS /hub/mcp endpoint
+        required: true
+      oauth_client_id:
+        description: Registered public OAuth client ID (not a secret)
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: sync-fixed-mcp
+  cancel-in-progress: false
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate fixed source and hash
+        env:
+          SOURCE: ${{ inputs.source_sha }}
+          HASH: ${{ inputs.package_sha256 }}
+        run: |
+          [[ "$SOURCE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$HASH" =~ ^[0-9a-f]{64}$ ]]
+      - uses: actions/create-github-app-token@v2
+        id: app
+        with:
+          app-id: ${{ secrets.ITPAY_BUNDLE_APP_ID }}
+          private-key: ${{ secrets.ITPAY_BUNDLE_APP_PRIVATE_KEY }}
+          owner: itpay-ai
+          repositories: |
+            compose-v4
+            itpay-plugin-chatgpt
+      - uses: actions/checkout@v7
+        with:
+          path: plugin
+          token: ${{ steps.app.outputs.token }}
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          repository: itpay-ai/compose-v4
+          ref: ${{ inputs.source_sha }}
+          path: source
+          token: ${{ steps.app.outputs.token }}
+          persist-credentials: false
+      - name: Build and verify exact candidate
+        env:
+          MCP_URL: ${{ inputs.mcp_url }}
+          CLIENT_ID: ${{ inputs.oauth_client_id }}
+          HASH: ${{ inputs.package_sha256 }}
+          SOURCE: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          python3 source/apps/mcp/scripts/build-chat-packages.py --output "$RUNNER_TEMP/mcp" --mcp-url "$MCP_URL" --oauth-client-id "$CLIENT_ID"
+          archive=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["packages"]["itpay-plugin-chatgpt"]["file"])' "$RUNNER_TEMP/mcp/delivery.json")
+          python3 plugin/scripts/apply-mcp-package.py "$RUNNER_TEMP/mcp/$archive" "$HASH" --source-commit "$SOURCE"
+          cd plugin
+          node --test tests/*.test.mjs
+      - name: Propose changed product only
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SOURCE: ${{ inputs.source_sha }}
+        working-directory: plugin
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo 'No product change; no commit, push or PR.'
+            exit 0
+          fi
+          branch="codex/mcp-${SOURCE:0:12}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            echo 'Existing candidate branch: review it before updating; not overwriting.'
+            exit 1
+          fi
+          git switch -c "$branch"
+          git config user.name 'ItPay bundle bot'
+          git config user.email 'bundle-bot@users.noreply.github.com'
+          git add plugin.json mcp.json skills/itpay-services/SKILL.md LICENSE SOURCE.json
+          git commit -m "Sync fixed MCP candidate ${SOURCE:0:12}"
+          git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push origin "$branch"
+          gh pr create --base main --head "$branch" --title "Sync MCP candidate ${SOURCE:0:12}" --body "Fixed compose-v4 source: $SOURCE. No npm/CLI sync or activation. Review before merge."
