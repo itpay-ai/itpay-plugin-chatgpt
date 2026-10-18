@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "itpay-plugin-chatgpt",
+  "version": "3.0.0-candidate.1",
+  "description": "Use connected ItPay services, review current results and open official checkout links.",
+  "author": {
+    "name": "itpay.ai",
+    "url": "https://itpay.ai"
+  },
+  "homepage": "https://itpay.ai",
+  "repository": "https://github.com/itpay-ai/itpay-plugin-chatgpt",
+  "license": "MIT",
+  "keywords": [
+    "itpay",
+    "services",
+    "mcp"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "ItPay for ChatGPT & Codex",
+        "shortDescription": "Services in your conversation",
+        "defaultPrompt": [
+          "Find an ItPay service for my request.",
+          "Continue my existing ItPay task."
+        ]
+      }
+    }
+  }
+}

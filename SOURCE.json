@@ -1,0 +1,8 @@
+{
+  "repository": "itpay-ai/compose-v4",
+  "source_commit": "65709382f0baf178c729b066fb5c142ae668bcc0",
+  "version": "3.0.0-candidate.1",
+  "package_sha256": "2865f55d6bdc3935f975aa47e1d29b6b6926b8d49c914f9a13370966d9c3fc22",
+  "skill_sha256": "602b3a50a4681d3393bbba7e5d9b05115dab7653a072d157db444d9496405d34",
+  "scope": "isolated loopback candidate; not remote host activation"
+}
