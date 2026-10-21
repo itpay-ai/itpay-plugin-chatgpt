@@ -1,7 +1,12 @@
 name: Sync fixed ItPay MCP candidate
+# Manual only: explain the need and obtain user approval before each Actions run.
 on:
   workflow_dispatch:
     inputs:
+      approval_reason:
+        description: User-approved reason for this exact run (include approval reference)
+        required: true
+        type: string
       source_sha:
         description: Reviewed full compose-v4 commit SHA
         required: true
@@ -14,6 +19,7 @@ on:
       oauth_client_id:
         description: Registered public OAuth client ID (not a secret)
         required: true
+
 permissions:
   contents: read
 concurrency:
