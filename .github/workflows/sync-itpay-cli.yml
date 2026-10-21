@@ -1,9 +1,13 @@
 name: Sync ItPay CLI bundle
 
+# Manual only: explain the need and obtain user approval before each Actions run.
 on:
-  repository_dispatch:
-    types: [itpay-cli-published]
   workflow_dispatch:
+    inputs:
+      approval_reason:
+        description: User-approved reason for this exact run (include approval reference)
+        required: true
+        type: string
 
 jobs:
   sync:

@@ -1,10 +1,13 @@
 name: Test ChatGPT Plugin
 
+# Manual only: explain the need and obtain user approval before each Actions run.
 on:
-  pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      approval_reason:
+        description: User-approved reason for this exact run (include approval reference)
+        required: true
+        type: string
 
 permissions:
   contents: read
