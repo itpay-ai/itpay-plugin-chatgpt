@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "itpay-plugin-chatgpt",
+  "version": "3.1.0-pa.1",
+  "description": "Compare constrained railway options and read original saved results through fixed remote tools.",
+  "author": {
+    "name": "itpay.ai",
+    "url": "https://itpay.ai"
+  },
+  "homepage": "https://itpay.ai",
+  "repository": "https://github.com/itpay-ai/itpay-plugin-chatgpt",
+  "license": "MIT",
+  "keywords": [
+    "itpay",
+    "services",
+    "mcp"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "ItPay for ChatGPT & Codex",
+        "shortDescription": "Connected ItPay railway results",
+        "defaultPrompt": [
+          "Compare railway options with my full constraints.",
+          "Read the saved result of my original task."
+        ]
+      }
+    }
+  }
+}

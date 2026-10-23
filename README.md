@@ -1,29 +1,27 @@
-# ItPay for ChatGPT and Codex
+# ItPay remote MCP candidate
 
-Platform package for the public OpenAI Plugins Directory. It combines an MCP-backed ItPay app for ChatGPT with a bundled CLI Skill for local Codex.
+This branch is the independent Dot remote product. It contains no CLI, bundled
+runtime, npm installer or fallback command. Existing CLI tasks remain at their
+original entry and identity.
 
-## Package contract
+## Candidate status
 
-- Required manifest: `.codex-plugin/plugin.json`.
-- Skill: `skills/itpay/SKILL.md`.
-- Offline CLI: `skills/itpay/vendor/itpay-cli/`, pinned by `bundle.lock.json`.
-- ChatGPT uses remote MCP OAuth. It must not treat sandbox files or `~/.itpay-v3` as the user's stable identity.
-- Local Codex uses the bundled CLI and a truthful `codex-desktop` or `codex-cli` Agent Type.
-- Checkout remains an external human handoff. The plugin never collects card data, CVV, payment passwords, verification codes, or wallet private keys.
+Version `3.1.0-pa.1`, query scope: two fixed railway searches and original saved
+result/page reads. Queries create persistent runs and may consume declared
+entitlements; they are not labelled read-only. No purchase, aftercare write,
+credits, subscription or digital-service upsell is in this package.
 
-## Submission rules
+The exact new HTTPS `/agent/mcp` endpoint and OAuth registration are **pending**.
+`mcp.template.json` is deliberately disabled and is not an installable MCP
+configuration. Do not install this unpaired source as a working native product.
+A reviewed exact endpoint/client/resource pairing is required before Testing;
+the old `/hub/mcp` registration or a loopback fixture is not that evidence.
 
-Submit as **With MCP** (app-plus-skills), not Skills only. The publisher needs OpenAI Platform **Apps Management: Write** and a verified developer or business identity. The portal requires a public production MCP URL, domain challenge, OAuth/reviewer access, exact CSP, accurate tool annotations, starter prompts, exactly five positive and three negative test cases, release notes, countries, website, support, privacy, and terms.
+`SOURCE.json` records the V4 source, generated catalogue and Skill hashes. The
+fixed builder is `apps/mcp/scripts/build-chat-packages.py --personal-agent` in
+Compose V4. Run it with the reviewed public endpoint and client ID only after
+pairing review; the builder itself never registers, deploys, uploads or approves.
 
-The Skills ZIP limit is 100 MB and must contain one plugin root. Public submission scans the MCP server and uploads the final Skill tree separately; it cannot publish a reference to an already-released ChatGPT app.
-
-Current blocker: the public ItPay MCP OAuth server and legal/support URLs are not present in the CLI repository. Keep `.mcp.json` out until those production values exist.
-
-## Verify
-
-```bash
-npm test
-python3 /path/to/plugin-creator/scripts/validate_plugin.py .
-```
-
-Official rules: [Build plugins](https://learn.chatgpt.com/docs/build-plugins), [Submit plugins](https://learn.chatgpt.com/docs/submit-plugins), [Submission errors](https://learn.chatgpt.com/docs/plugin-submission-errors).
+Local checks: `npm test` checks the payload hashes, remote-only boundary and
+pending connection status. Native Dot experience and platform approval remain
+separate, unobserved gates. Actions are manual and need explicit per-run approval.
