@@ -1,0 +1,7 @@
+{
+  "activation": "disabled",
+  "reason": "exact endpoint and OAuth registration pending; not a runnable MCP configuration",
+  "resource_path": "/agent/mcp",
+  "endpoint": null,
+  "public_oauth_client_id": null
+}

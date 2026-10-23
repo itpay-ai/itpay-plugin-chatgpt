@@ -1,0 +1,28 @@
+{
+  "source_commit": "7e8f1449b07127146d6689bcd30d237a467b62af",
+  "source_dirty": false,
+  "source_files": {
+    "db/v3/publications/itpay-rail-test-domain-v1.json": "1d43713237f8606eb69537fc32f6654fad3ac77effa12d64b6c6051013176d2c",
+    "db/v3/hub-catalog/rail-query-operation-choice-v1.json": "c178b3e7b6ef8946db294710456e47b917003ea9f08ed7943b36aaf9d75e251e",
+    "db/v3/hub-catalog/personal-agent-rail-v1.json": "583a266342e5425de579844637286a392521c5be6ece848e9d433edf310ad5e4",
+    "packages/contracts/schemas/purchase-confirmation.v1.json": "ae58ea0fae45c372102181d2ec1655754762b9fc5b9e0b3eccd72ed210be5727",
+    "packages/contracts/openapi/itpay.v3.yaml": "1c5dfeb45a3d12f834d863103bea336c74aee3cc7a44c4e9ed8376ec482ec510"
+  },
+  "version": "3.1.0-pa.1",
+  "scope": "query",
+  "mcp_url": null,
+  "oauth_client_id": null,
+  "resource": null,
+  "transport": "streamable-http",
+  "protocol": "itpay.agent.v1",
+  "pairing_status": "pending",
+  "activation": "not deployed, registered, uploaded or approved by this build",
+  "skill_sha256": "7ed795c3d2a50f5396c626d47c00f6be6a1cb57163413eb949f71f18c7e630c5",
+  "catalog_sha256": "adad6abf16cefe5c0e1b1c52dc78bbdb5561d695ab86a35878204435e2efd5cb",
+  "files": {
+    "LICENSE": "34c55ebe2e8b213f3839537131d9365ba918dd9d16ac41432e95c87044722384",
+    "mcp.template.json": "835984a51ed78285c04b3940499a30140a97e7ec4b735522f94a0781fb74d4db",
+    "plugin.json": "45b315ba3e64b60bb0af11e95e1da57d11c89410990360be2c811b6a89378bc0",
+    "skills/itpay-services/SKILL.md": "7ed795c3d2a50f5396c626d47c00f6be6a1cb57163413eb949f71f18c7e630c5"
+  }
+}
